@@ -1,485 +1,462 @@
-"use client"; 
+// Updated rtvi.config.tsx
 
-import { DailyTransport } from "@daily-co/realtime-ai-daily"; 
-import { TooltipProvider } from "@radix-ui/react-tooltip"; 
-import { useEffect, useRef, useState } from "react"; 
-import { FunctionCallParams, LLMHelper, RTVIClient } from "realtime-ai"; 
-import { RTVIClientAudio, RTVIClientProvider } from "realtime-ai-react"; 
-import App from "@/components/App"; 
-import { AppProvider } from "@/components/context"; 
-import Header from "@/components/Header"; 
-import Splash from "@/components/Splash";
-import { SymptomsProvider } from "@/components/SymptomsContext";
-import { BookingProvider } from "@/components/BookingContext";
-import { 
-  BOT_READY_TIMEOUT, 
-  defaultBotProfile, 
-  defaultConfig, 
-  defaultMaxDuration, 
-  defaultServices, 
-  endpoints 
-} from "@/rtvi.config"; 
+export const BOT_READY_TIMEOUT = 15 * 1000; // 15 seconds
+export const defaultBotProfile = "voice_2024_10";
+export const defaultMaxDuration = 600;
 
-export default function Home() { 
-  const [showSplash, setShowSplash] = useState(true); 
-  const voiceClientRef = useRef(null); 
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  
-  // Initialize or retrieve session ID on component mount
-  useEffect(() => {
-    // Check if there's an existing session ID in localStorage
-    const savedSessionId = localStorage.getItem('physiotattva_session_id');
-    if (savedSessionId) {
-      setSessionId(savedSessionId);
-    } else {
-      // Create a new session ID
-      const newSessionId = Math.random().toString(36).substring(2, 15);
-      setSessionId(newSessionId);
-      localStorage.setItem('physiotattva_session_id', newSessionId);
-    }
-  }, []);
-  
-  useEffect(() => { 
-    if (!showSplash || voiceClientRef.current || !sessionId) { 
-      return; 
-    } 
-    
-    try { 
-      const voiceClient = new RTVIClient({ 
-        transport: new DailyTransport(), 
-        params: { 
-          baseUrl: process.env.NEXT_PUBLIC_BASE_URL || "/api", 
-          endpoints: endpoints, 
-          requestData: { 
-            services: defaultServices, 
-            config: defaultConfig, 
-            bot_profile: defaultBotProfile, 
-            max_duration: defaultMaxDuration,
-          }, 
-        }, 
-        timeout: BOT_READY_TIMEOUT, 
-        enableMic: true, 
-        enableCam: false, 
-      }); 
-      
-      voiceClient.on("botReady", () => { 
-        console.log("Bot is ready!"); 
-      }); 
-      
-      voiceClient.on("error", (error) => { 
-        console.error("Voice client error:", error); 
-      }); 
-      
-      // Initialize LLM Helper with function calling for Meta Llama
-      const llmHelper = voiceClient.registerHelper(
-        "llm",
-        new LLMHelper({
-          callbacks: {}
-        })
-      ) as LLMHelper;
-      
-      // Handle function calls from Meta Llama
-      llmHelper.handleFunctionCall(async (fn: FunctionCallParams) => {
-        console.log("Function call received:", fn.functionName, fn.arguments);
-        
-        // Handle symptom recording
-        if (fn.functionName === "record_symptom") {
-          const args = fn.arguments as any;
-          try {
-            // Call our symptoms API to store the symptom
-            const response = await fetch('/api/symptoms', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                symptom: args.symptom,
-                severity: args.severity,
-                duration: args.duration,
-                location: args.location,
-                triggers: args.triggers,
-                sessionId: sessionId, // Use consistent session ID
-              }),
-            });
-            
-            const result = await response.json();
-            console.log("Symptom recorded:", result);
-            
-            // Return the result to the LLM so it can continue the conversation
-            return {
-              success: true,
-              symptom: args.symptom,
-              recorded: true,
-              message: `Successfully recorded symptom: ${args.symptom}`
-            };
-          } catch (error) {
-            console.error('Error recording symptom:', error);
-            return {
-              success: false,
-              error: 'Failed to record symptom'
-            };
-          }
-        }
-        
-        // Handle appointment checking - DIRECT EXTERNAL API CALL
-        if (fn.functionName === "check_appointment") {
-          const args = fn.arguments as any;
-          let phoneNumber = args.phone_number;
-          
-          console.log("Phone number from function call:", phoneNumber);
-          
-          // Use the test phone number if not provided or if it's a placeholder
-          if (!phoneNumber || 
-              phoneNumber === "patient_phone_number" || 
-              phoneNumber === "patient's phone number") {
-            phoneNumber = '9873219957';
-          }
-          
-          try {
-            // CALLING EXTERNAL API DIRECTLY
-            const userId = '1'; // Default user ID
-            const apiUrl = `https://api-dev.physiotattva247.com/follow-up-appointments/${encodeURIComponent(phoneNumber)}?user_id=${userId}`;
-            
-            console.log("Calling external API directly:", apiUrl);
-            
-            const response = await fetch(apiUrl, {
-              method: 'GET',
-              headers: {
-                'Content-Type': 'application/json',
-                // Add any required authentication headers here if needed
-              },
-              cache: 'no-store' // Disable caching
-            });
-            
-            console.log("API response status:", response.status);
-            
-            // Only proceed if we get a successful response
-            if (!response.ok) {
-              throw new Error(`API error: ${response.status} ${response.statusText}`);
-            }
-            
-            // Parse the API response
-            const data = await response.json();
-            console.log("API response data:", data);
-            
-            // Format the appointment data for the LLM
-            let formattedAppointments = [];
-            
-            // Check if data exists and has appointment
-            if (data && data.success && data.appointment) {
-              // Format datetime properly
-              const startDate = new Date(data.appointment.startDateTime);
-              const formattedDate = startDate.toLocaleDateString('en-US', { 
-                weekday: 'long', 
-                year: 'numeric', 
-                month: 'long', 
-                day: 'numeric' 
-              });
-              const formattedTime = startDate.toLocaleTimeString('en-US', {
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: true
-              });
-              
-              formattedAppointments.push({
-                date: formattedDate,
-                time: formattedTime,
-                doctor: data.appointment.doctor,
-                type: data.appointment.consultationType,
-                campus: data.appointment.campus || "Online",
-                status: data.appointment.status
-              });
-            }
-            
-            // Return the formatted appointments to the LLM
-            return {
-              success: true,
-              phone_number: phoneNumber,
-              has_appointments: formattedAppointments.length > 0,
-              appointments: formattedAppointments,
-              appointment_count: formattedAppointments.length,
-              message: formattedAppointments.length > 0 
-                ? `Found ${formattedAppointments.length} upcoming appointment for phone number ${phoneNumber}` 
-                : `No upcoming appointments found for phone number ${phoneNumber}`
-            };
-          } catch (error) {
-            console.error('Error calling external appointment API:', error);
-            
-            // Return error information without mock data
-            return {
-              success: false,
-              phone_number: phoneNumber,
-              has_appointments: false,
-              appointments: [],
-              appointment_count: 0,
-              error: (error as Error).message,
-              message: `Unable to retrieve appointments for ${phoneNumber}. Please try again later.`
-            };
-          }
-        }
+// Languages configuration
+export const LANGUAGES = [
+  {
+    label: "English",
+    value: "en",
+    tts_model: "sonic-english",
+    stt_model: "nova-2-general",
+    default_voice: "79a125e8-cd45-4c13-8a67-188112f4dd22",
+  },
+  // Other languages...
+];
 
-        // Handle slot fetching - DIRECT EXTERNAL API CALL
-        if (fn.functionName === "fetch_slots") {
-          const args = fn.arguments as any;
-          console.log("Slot fetch arguments:", args);
-          
-          try {
-            // Build query params from arguments
-            const weekSelection = args.week_selection || "this week";
-            const selectedDay = args.selected_day;
-            const consultationType = args.consultation_type || "Online";
-            const campusId = args.campus_id || "Indiranagar";
-            const userId = '1'; // Default user ID
-            
-            // Validate required fields
-            if (!selectedDay) {
-              throw new Error("Day of the week is required");
-            }
-            
-            // Convert day string to proper format (mon, tue, etc.)
-            const day = selectedDay.toLowerCase().substring(0, 3);
-            
-            // CALLING EXTERNAL API DIRECTLY
-            const apiUrl = `https://api-dev.physiotattva247.com/fetch-slots?week_selection=${encodeURIComponent(weekSelection)}&selected_day=${encodeURIComponent(day)}&consultation_type=${encodeURIComponent(consultationType)}&campus_id=${encodeURIComponent(campusId)}&user_id=${userId}`;
-            
-            console.log("Calling slots API directly:", apiUrl);
-            
-            const response = await fetch(apiUrl, {
-              method: 'GET',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              cache: 'no-store' // Disable caching
-            });
-            
-            console.log("API response status:", response.status);
-            
-            // Only proceed if we get a successful response
-            if (!response.ok) {
-              throw new Error(`API error: ${response.status} ${response.statusText}`);
-            }
-            
-            // Parse the API response
-            const data = await response.json();
-            console.log("Slots API response data:", data);
-            
-            // Extract available slots
-            const availableSlots = [];
-            if (data && data.success && data.hourly_slots) {
-              // Process hourly slots
-              for (const [slotKey, availability] of Object.entries(data.hourly_slots)) {
-                if (availability === "available") {
-                  // Extract time range from slot key (e.g., "slot_available_9-10" -> "9-10")
-                  const timeRange = slotKey.replace("slot_available_", "");
-                  
-                  // Format for better readability (e.g., "9-10" -> "9:00 AM - 10:00 AM")
-                  const [startHour, endHour] = timeRange.split('-').map(Number);
-                  const formattedSlot = {
-                    timeRange,
-                    start_time: `${startHour}:00 ${startHour >= 12 ? 'PM' : 'AM'}`,
-                    formatted: `${startHour > 12 ? startHour - 12 : startHour}:00 ${startHour >= 12 ? 'PM' : 'AM'} - ${endHour > 12 ? endHour - 12 : endHour}:00 ${endHour >= 12 ? 'PM' : 'AM'}`
-                  };
-                  
-                  availableSlots.push(formattedSlot);
-                }
-              }
-            }
-            
-            // Save the slot data to localStorage for booking reference
-            localStorage.setItem('physiotattva_slot_data', JSON.stringify({
-              date: data?.search_criteria?.date,
-              consultation_type: consultationType,
-              campus_id: campusId,
-              week_selection: weekSelection,
-              selected_day: selectedDay,
-              available_slots: availableSlots
-            }));
-            
-            // Return formatted slots to the LLM
-            return {
-              success: true,
-              date: data?.search_criteria?.date,
-              available_slots: availableSlots,
-              total_available: availableSlots.length,
-              consultation_type: consultationType,
-              campus: campusId,
-              message: availableSlots.length > 0
-                ? `Found ${availableSlots.length} available slots for ${data?.search_criteria?.date} at ${campusId}`
-                : `No available slots found for ${data?.search_criteria?.date} at ${campusId}`
-            };
-          } catch (error) {
-            console.error('Error fetching slots:', error);
-            
-            // Return error information
-            return {
-              success: false,
-              error: (error as Error).message,
-              message: `Unable to fetch available slots. Please try again or select a different day.`
-            };
-          }
-        }
-        
-        // Handle appointment booking - DIRECT EXTERNAL API CALL
-        if (fn.functionName === "book_appointment") {
-          const args = fn.arguments as any;
-          console.log("Booking appointment with arguments:", args);
-          
-          try {
-            // Get saved slot data if available (for reference)
-            const savedSlotData = localStorage.getItem('physiotattva_slot_data');
-            let slotData = savedSlotData ? JSON.parse(savedSlotData) : null;
-            
-            // Required booking params
-            const weekSelection = args.week_selection || (slotData?.week_selection || "this week");
-            const selectedDay = args.selected_day || (slotData?.selected_day || "mon");
-            const startTime = args.start_time;
-            const consultationType = args.consultation_type || (slotData?.consultation_type || "Online");
-            const campusId = args.campus_id || (slotData?.campus_id || "Indiranagar");
-            const specialityId = args.speciality_id || "Physiotherapist";
-            const patientName = args.patient_name;
-            const mobileNumber = args.mobile_number;
-            const paymentMode = args.payment_mode || "pay now";
-            const userId = '1'; // Default user ID
-            
-            // Validate required fields
-            if (!selectedDay || !startTime || !consultationType || !patientName || !mobileNumber) {
-              throw new Error("Missing required booking information");
-            }
-            
-            // Book the appointment
-            const apiUrl = `https://api-dev.physiotattva247.com/book-appointment`;
-            
-            console.log("Calling booking API directly:", apiUrl);
-            
-            const requestBody = {
-              week_selection: weekSelection,
-              selected_day: selectedDay.toLowerCase().substring(0, 3),
-              start_time: startTime,
-              consultation_type: consultationType,
-              campus_id: campusId,
-              speciality_id: specialityId,
-              user_id: userId,
-              patient_name: patientName,
-              mobile_number: mobileNumber,
-              payment_mode: paymentMode
-            };
-            
-            console.log("Booking request body:", requestBody);
-            
-            const response = await fetch(apiUrl, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify(requestBody),
-              cache: 'no-store' // Disable caching
-            });
-            
-            console.log("API response status:", response.status);
-            
-            // Only proceed if we get a successful response
-            if (!response.ok) {
-              throw new Error(`API error: ${response.status} ${response.statusText}`);
-            }
-            
-            // Parse the API response
-            const data = await response.json();
-            console.log("Booking API response data:", data);
-            
-            // Save the booking info for display
-            if (data.success && data.appointmentInfo) {
-              localStorage.setItem('physiotattva_current_booking', JSON.stringify({
-                doctor: data.appointmentInfo.appointed_doctor,
-                date: data.appointmentInfo.calculated_date,
-                startDateTime: data.appointmentInfo.startDateTime,
-                consultationType: data.appointmentInfo.consultation_type,
-                leadId: data.appointmentInfo.lead_id,
-                paymentMode: data.appointmentInfo.payment_mode,
-                paymentUrl: data.payment?.short_url,
-                referenceId: data.payment?.reference_id,
-                patientName: patientName,
-                mobileNumber: mobileNumber
-              }));
-            }
-            
-            // Format booking response for LLM
-            const bookingResponse = {
-              success: data.success,
-              appointment_details: {
-                doctor: data.appointmentInfo?.appointed_doctor,
-                date: data.appointmentInfo?.calculated_date,
-                time: new Date(data.appointmentInfo?.startDateTime).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  hour12: true
-                }),
-                type: data.appointmentInfo?.consultation_type,
-                campus: campusId,
-                patient: patientName,
-                mobile: mobileNumber
-              },
-              payment_details: {
-                mode: data.appointmentInfo?.payment_mode,
-                url: data.payment?.short_url,
-                reference: data.payment?.reference_id
-              },
-              message: data.success 
-                ? `Appointment successfully booked with ${data.appointmentInfo?.appointed_doctor} on ${data.appointmentInfo?.calculated_date}.`
-                : `Unable to book appointment. Please try again later.`
-            };
-            
-            // Dispatch custom event to update booking UI
-            // Dispatch custom event to update booking UI
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('appointment_booked', { 
-                detail: bookingResponse
-              }));
-            }
-          
-          return bookingResponse;
-        } catch (error) {
-          console.error('Error booking appointment:', error);
-          
-          // Return error information
-          return {
-            success: false,
-            error: (error as Error).message,
-            message: `Unable to book the appointment. Please try again later.`
-          };
+// Default services configuration
+export const defaultServices = {
+  stt: "deepgram",
+  tts: "cartesia",
+  llm: "together"
+};
+
+// Dr. Riya prompt with function calling support for Meta Llama 3.1
+export const physiotherapistPrompt = `# Role: You are Dr. Riya, an exceptional physiotherapist working for Physiotattva. You possess in-depth knowledge and skills in physiotherapy.
+# Rule: Strictly only ask one question at a time
+
+# CRITICAL INSTRUCTION - NEVER REVEAL TECHNICAL DETAILS:
+# 1. You must NEVER mention any function names to the user (e.g., DO NOT say "record_symptom", "book_appointment", "check_appointment", "fetch_slots", etc.)
+# 2. You must NEVER mention parameter names to the user (e.g., DO NOT say "consultation_type", "patient_name", "payment_mode", "mobile_number", "selected_day", etc.)
+# 3. You must NEVER say phrases like "I'm calling a function" or "I'm using a function" or "Let me book that with book_appointment"
+# 4. Speak ONLY as a human physiotherapist would, in natural language
+# 5. Make all function calls silently in the background without any indication to the user
+# 6. Think of these functions as your internal thought process - the user should never know they exist
+# 7. When booking appointments, simply ask for the information naturally without mentioning parameter names
+
+# VIOLATION EXAMPLES - NEVER SAY:
+# ❌ "I'll use the book_appointment function to schedule that"
+# ❌ "Let me check your appointment with the check_appointment function"
+# ❌ "I need your consultation_type and patient_name"
+# ❌ "I'm recording your symptom in our system"
+# ❌ "Let me fetch available slots for you"
+
+# CORRECT APPROACH - SPEAK NATURALLY:
+# ✓ "Let me schedule that appointment for you"
+# ✓ "Let me check your existing appointments"
+# ✓ "Would you prefer an online or in-person consultation?"
+# ✓ "I understand your symptoms, thank you for sharing that"
+# ✓ "Here are our available time slots"
+
+# FUNCTION CALLING FORMAT INSTRUCTIONS:
+# You must follow this exact format for calling functions. Do not include this in your spoken response to the user.
+# If you choose to call a function, reply ONLY with the following format with no prefix or suffix:
+# <function=function_name>{"parameter_name": "parameter_value"}</function>
+# Example: <function=book_appointment>{"selected_day":"mon","start_time":"2:00 PM"}</function>
+# Make sure the entire function call is on a single line with no line breaks
+
+Stage 1: Initial Greeting & Routing (Dr. Riya)
+System Prompt:
+"Hi, this is Dr. Riya from Physiotattva. How can I assist you today?"
+
+Routing Logic:
+If user mentions booking an appointment, move to Stage 3 (Appointment Booking).
+If user describes symptoms, move to Stage 2 (Symptom Checker).
+If user asks about existing appointments, check their appointment using the check_appointment function.
+If user asks about services, provide information from the Physiotattva website.
+
+Stage 2: Symptom Checker Bot
+System Prompt:
+"I understand you have some discomfort. Can you describe where you feel the pain?"
+
+Follow-up Questions (if needed): (Strictly only ask one question at a time)
+"How long have you had this pain?"
+"On a scale of 1 to 10, how severe is it?"
+"Is the pain constant or does it come and go?"
+"Does it worsen with movement?"
+
+Remember to use the record_symptom function whenever the patient provides new symptom information.
+Important: Do NOT say "I'm recording this symptom" or "Let me make a note of that" - simply record it silently using the function and continue the conversation naturally.
+
+Decision:
+If symptoms match a physiotherapy condition, recommend a consultation and move to Stage 3 (Appointment Booking).
+
+Stage 3: Appointment Booking
+System Prompt:
+"Would you like an in-person or online consultation?"
+
+Case 1: In-Person Appointment
+"We have centers in Bangalore and Hyderabad. Which city do you prefer?"
+"Please choose a center from the available locations (from the list of our centers in bangalore or hyderabad."
+
+After the user selects location and consultation type:
+- Call the fetch_slots function to get available slots for the selected day
+- Present the available time slots to the user based on the response
+- Let the user pick a time slot
+- Ask for their name and phone number
+- Use book_appointment to book the appointment
+- Confirm the booking details
+
+"What day of this or next week would you like? (Available Mon to Sat)"
+[Use fetch_slots to get available times]
+"Here are the available time slots. Which one works for you?"
+"Could I get your name and phone number for the booking?"
+[Use book_appointment to book the slot]
+"Your appointment is confirmed. You'll receive details shortly. Anything else I can help with?"
+
+Case 2: Online Appointment
+"What day of this or next week would you like? (Available Mon to Sat)"
+[Use fetch_slots to get available times]
+"Here are the available time slots. Which one works for you?"
+"Could I get your name and phone number for the booking?"
+[Use book_appointment to book the slot]
+"Your appointment is confirmed. You'll receive details shortly. Anything else I can help with?"
+
+Stage 4: Appointment Lookup
+When a user asks about their appointment, ask for their phone number if they haven't provided it already. Then use the check_appointment function to look up their appointment details.
+
+After getting the appointment details, summarize the appointment information in a friendly way:
+"You have an appointment on [Date] at [Time] for a [Online/In-Person] consultation at [Campus] with [Doctor]."`;
+
+// Default LLM prompt
+export const defaultLLMPrompt = `You are a assistant called ExampleBot. You can ask me anything.
+Keep responses brief and legible.
+Your responses will converted to audio. Please do not include any special characters in your response other than '!' or '?'.
+Start by briefly introducing yourself.`;
+
+// Default configuration
+export const defaultConfig = [
+  {
+    service: "vad",
+    options: [
+      {
+        name: "params",
+        value: {
+          stop_secs: 0.6
         }
       }
-      
-      return null; // Return null for unhandled function calls
-    });
-    
-    voiceClientRef.current = voiceClient;
-    console.log("Voice client initialized with Meta Llama function calling");
-  } catch (error) { 
-    console.error("Error initializing voice client:", error); 
-  } 
-}, [showSplash, sessionId]); 
+    ]
+  },
+  {
+    service: "tts",
+    options: [
+      {
+        name: "voice",
+        value: "79a125e8-cd45-4c13-8a67-188112f4dd22"
+      },
+      {
+        name: "language",
+        value: "en"
+      },
+      {
+        name: "text_filter",
+        value: {
+          filter_code: true,
+          filter_functions: true,
+          filter_references: true,
+          filter_meta: true,
+          filter_urls: true,
+          filter_xml: true,
+          filter_custom: [
+            // Function call pattern - Meta Llama 3.1 format
+            {
+              pattern: "<function=.*?>\\{.*?\\}</function>",
+              flags: "gs",
+              replacement: ""
+            },
+            // Function names - more aggressive removal
+            {
+              pattern: "\\b(record_symptom|book_appointment|check_appointment|fetch_slots)\\b",
+              flags: "gi",
+              replacement: ""
+            },
+            // Parameter names
+            {
+              pattern: "\\b(consultation_type|patient_name|payment_mode|mobile_number|selected_day|week_selection|start_time|campus_id|symptom|severity|duration|location|triggers|phone_number|speciality_id)\\b",
+              flags: "gi",
+              replacement: ""
+            },
+            // Function-related terms
+            {
+              pattern: "\\b(function|parameter|call(ing)?\\s+function|using\\s+function|tool|syntax)\\b",
+              flags: "gi",
+              replacement: ""
+            },
+            // Remove phrases about recording/using system
+            {
+              pattern: "\\b(I('m| am) (recording|using|calling|executing|implementing|fetching|checking|booking))\\b",
+              flags: "gi",
+              replacement: ""
+            },
+            // Remove any function call explanations
+            {
+              pattern: "Let me (call|use|check|fetch|book|record).*",
+              flags: "gi",
+              replacement: ""
+            }
+          ]
+        }
+      },
+      {
+        name: "model",
+        value: "sonic-english"
+      },
+      {
+        name: "emotion",
+        value: [
+          "positivity:low"
+        ]
+      }
+    ]
+  },
+  {
+    service: "llm",
+    options: [
+      {
+        name: "model",
+        value: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
+      },
+      {
+        name: "initial_messages",
+        value: [
+          {
+            role: "system",
+            content: physiotherapistPrompt
+          }
+        ]
+      },
+      {
+        name: "run_on_config",
+        value: true
+      },
+      {
+        name: "tools",
+        value: [
+          {
+            type: "function",
+            function: {
+              name: "record_symptom",
+              description: "Record a symptom reported by the patient",
+              parameters: {
+                type: "object",
+                properties: {
+                  symptom: {
+                    type: "string",
+                    description: "The symptom reported by the patient"
+                  },
+                  severity: {
+                    type: "integer",
+                    description: "Severity of the symptom on a scale of 1-10 (if provided)",
+                    minimum: 1,
+                    maximum: 10
+                  },
+                  duration: {
+                    type: "string",
+                    description: "How long the patient has been experiencing this symptom"
+                  },
+                  location: {
+                    type: "string",
+                    description: "The body part or area where the symptom is experienced"
+                  },
+                  triggers: {
+                    type: "string",
+                    description: "Activities or situations that trigger or worsen the symptom"
+                  }
+                },
+                required: ["symptom"]
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "check_appointment",
+              description: "Check upcoming appointments for a patient",
+              parameters: {
+                type: "object",
+                properties: {
+                  phone_number: {
+                    type: "string",
+                    description: "The patient's phone number to look up appointments"
+                  }
+                },
+                required: ["phone_number"]
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "fetch_slots",
+              description: "Fetch available appointment slots based on day and location preferences",
+              parameters: {
+                type: "object",
+                properties: {
+                  week_selection: {
+                    type: "string",
+                    description: "Which week to check",
+                    enum: ["this week", "next week"]
+                  },
+                  selected_day: {
+                    type: "string",
+                    description: "Day of the week",
+                    enum: ["mon", "tue", "wed", "thu", "fri", "sat"]
+                  },
+                  consultation_type: {
+                    type: "string",
+                    description: "Type of consultation",
+                    enum: ["Online", "In-Person"]
+                  },
+                  campus_id: {
+                    type: "string",
+                    description: "Campus location (required for In-Person consultations)",
+                    enum: ["Indiranagar", "Koramangala", "Whitefield", "Hyderabad"]
+                  }
+                },
+                required: ["selected_day", "consultation_type"]
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "book_appointment",
+              description: "Book an appointment for a patient",
+              parameters: {
+                type: "object",
+                properties: {
+                  week_selection: {
+                    type: "string",
+                    description: "Which week to book",
+                    enum: ["this week", "next week"]
+                  },
+                  selected_day: {
+                    type: "string",
+                    description: "Day of the week",
+                    enum: ["mon", "tue", "wed", "thu", "fri", "sat"]
+                  },
+                  start_time: {
+                    type: "string",
+                    description: "Start time of the appointment",
+                    pattern: "^[0-9]{1,2}:[0-9]{2} (AM|PM)$"
+                  },
+                  consultation_type: {
+                    type: "string",
+                    description: "Type of consultation",
+                    enum: ["Online", "In-Person"]
+                  },
+                  campus_id: {
+                    type: "string",
+                    description: "Campus location (required for In-Person consultations)",
+                    enum: ["Indiranagar", "Koramangala", "Whitefield", "Hyderabad"]
+                  },
+                  speciality_id: {
+                    type: "string",
+                    description: "Speciality required",
+                    default: "Physiotherapist"
+                  },
+                  patient_name: {
+                    type: "string",
+                    description: "Name of the patient"
+                  },
+                  mobile_number: {
+                    type: "string",
+                    description: "Mobile number of the patient"
+                  },
+                  payment_mode: {
+                    type: "string",
+                    description: "Payment mode",
+                    enum: ["pay now", "pay later"],
+                    default: "pay now"
+                  }
+                },
+                required: ["selected_day", "start_time", "consultation_type", "patient_name", "mobile_number"]
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    service: "stt",
+    options: [
+      { 
+        name: "model", 
+        value: "nova-2-general" 
+      },
+      { 
+        name: "language", 
+        value: "en" 
+      }
+    ]
+  }
+];
 
-if (showSplash) { 
-  return <Splash onComplete={() => setShowSplash(false)} />; 
-} 
+// LLM model choices
+export const LLM_MODEL_CHOICES = [
+  {
+    label: "Together AI",
+    value: "together",
+    models: [
+      {
+        label: "Meta Llama 3.1 70B Instruct Turbo",
+        value: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
+      },
+      {
+        label: "Meta Llama 3.1 8B Instruct Turbo",
+        value: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"
+      },
+      {
+        label: "Meta Llama 3.1 405B Instruct Turbo",
+        value: "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo"
+      }
+    ]
+  },
+  {
+    label: "Anthropic",
+    value: "anthropic",
+    models: [
+      {
+        label: "Claude 3.5 Sonnet",
+        value: "claude-3-5-sonnet-20240620"
+      }
+    ]
+  },
+  {
+    label: "Open AI",
+    value: "openai",
+    models: [
+      {
+        label: "GPT-4o",
+        value: "gpt-4o"
+      },
+      {
+        label: "GPT-4o Mini",
+        value: "gpt-4o-mini"
+      }
+    ]
+  }
+];
 
-return ( 
-  <RTVIClientProvider client={voiceClientRef.current}> 
-    <RTVIClientAudio /> 
-    <TooltipProvider> 
-      <SymptomsProvider>
-        <BookingProvider>
-          <div className="flex flex-col min-h-svh"> 
-            {/* <Header />  */}
-            <main className="flex flex-1 flex-col items-center justify-center p-4 sm:px-6 md:px-8"> 
-              <AppProvider> 
-                <App /> 
-              </AppProvider> 
-            </main> 
-          </div> 
-        </BookingProvider>
-      </SymptomsProvider>
-    </TooltipProvider> 
-  </RTVIClientProvider> 
-); 
-}
+// Preset characters
+export const PRESET_CHARACTERS = [
+  {
+    name: "Default",
+    prompt: defaultLLMPrompt,
+    voice: "79a125e8-cd45-4c13-8a67-188112f4dd22",
+  },
+  {
+    name: "Dr. Riya (Physiotherapist)",
+    prompt: physiotherapistPrompt,
+    voice: "79a125e8-cd45-4c13-8a67-188112f4dd22",
+  }
+];
+
+// API endpoints configuration
+export const endpoints = {
+  connect: "/connect",
+  actions: "/actions",
+};
