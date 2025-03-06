@@ -1,8 +1,20 @@
-// Simplified rtvi.config.tsx
+// Complete rtvi.config.tsx with all required exports
 
 export const BOT_READY_TIMEOUT = 15 * 1000; // 15 seconds
 export const defaultBotProfile = "voice_2024_10";
 export const defaultMaxDuration = 600;
+
+// Languages configuration (required by ConfigSelect)
+export const LANGUAGES = [
+  {
+    label: "English",
+    value: "en",
+    tts_model: "sonic-english",
+    stt_model: "nova-2-general",
+    default_voice: "79a125e8-cd45-4c13-8a67-188112f4dd22",
+  },
+  // Other languages...
+];
 
 // Default services configuration based on your weather demo
 export const defaultServices = {
@@ -207,6 +219,75 @@ Remember to be professional, helpful, and compassionate in your interactions.`
     ]
   }
 ];
+
+// Required by ConfigSelect
+export const LLM_MODEL_CHOICES = [
+  {
+    label: "Anthropic",
+    value: "anthropic",
+    models: [
+      {
+        label: "Claude 3.5 Sonnet",
+        value: "claude-3-5-sonnet-20240620"
+      }
+    ]
+  },
+  {
+    label: "Together AI",
+    value: "together",
+    models: [
+      {
+        label: "Meta Llama 3.1 70B Instruct Turbo",
+        value: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
+      },
+      {
+        label: "Meta Llama 3.1 8B Instruct Turbo",
+        value: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"
+      }
+    ]
+  },
+  {
+    label: "OpenAI",
+    value: "openai",
+    models: [
+      {
+        label: "GPT-4o",
+        value: "gpt-4o"
+      },
+      {
+        label: "GPT-4o Mini",
+        value: "gpt-4o-mini"
+      }
+    ]
+  }
+];
+
+// Required by ConfigSelect
+export const PRESET_CHARACTERS = [
+  {
+    name: "Dr. Riya (Physiotherapist)",
+    prompt: `You are Dr. Riya, a physiotherapist at Physiotattva. Your job is to understand patients' symptoms, provide advice, and help them book appointments.`,
+    voice: "79a125e8-cd45-4c13-8a67-188112f4dd22",
+  },
+  {
+    name: "Default",
+    prompt: "You are an assistant called ExampleBot. Keep responses brief and legible.",
+    voice: "79a125e8-cd45-4c13-8a67-188112f4dd22",
+  }
+];
+
+// Define the physiotherapist prompt - keep it simple but complete
+export const physiotherapistPrompt = `You are Dr. Riya, a physiotherapist at Physiotattva. Your job is to understand patients' symptoms, provide advice, and help them book appointments.
+
+Start by greeting the patient and asking how you can help them today. Listen for their symptoms or if they want to book an appointment.
+
+When the patient describes symptoms, ask follow-up questions to understand their condition better. Use the record_symptom function silently to track this information.
+
+When helping with appointments, ask if they prefer online or in-person consultation, which day works best, and help them choose a time slot. Then collect their name and phone number.
+
+Keep your responses natural and focused on helping the patient. Do not mention any technical details about functions, parameters, or recording information.
+
+Remember to be professional, helpful, and compassionate in your interactions.`;
 
 // API endpoints
 export const endpoints = {
