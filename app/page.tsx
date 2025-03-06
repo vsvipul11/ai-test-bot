@@ -20,57 +20,447 @@ import {
   endpoints 
 } from "@/rtvi.config"; 
 
-// Function to clean text before TTS processing - EMERGENCY SOLUTION
-function cleanTextForTTS(text) {
-  if (!text) return text;
+// Function to create a voice client with extreme text filtering
+function createSafeVoiceClient(sessionId) {
+  console.log("Creating voice client with nuclear text protection");
   
-  // Log original text for debugging
-  console.log("Original text before cleaning:", text);
+  // Create the voice client with the normal config
+  const voiceClient = new RTVIClient({ 
+    transport: new DailyTransport(), 
+    params: { 
+      baseUrl: process.env.NEXT_PUBLIC_BASE_URL || "/api", 
+      endpoints: endpoints, 
+      requestData: { 
+        services: defaultServices, 
+        config: defaultConfig, 
+        bot_profile: defaultBotProfile, 
+        max_duration: defaultMaxDuration,
+      }, 
+    }, 
+    timeout: BOT_READY_TIMEOUT, 
+    enableMic: true, 
+    enableCam: false, 
+  });
   
-  // Step 1: Remove any function calls
-  let cleanedText = text.replace(/<function=.*?<\/function>/gs, "");
+  // Add a nuclear text interceptor
+  voiceClient.on("beforeMessageToSpeech", (event) => {
+    if (event && event.text) {
+      // Get original text
+      const originalText = event.text;
+      console.log("CHECKING TEXT:", originalText);
+      
+      // List of all problematic terms to check for
+      const problematicTerms = [
+        "record_symptom", "book_appointment", "check_appointment", "fetch_slots",
+        "symptom:", "severity:", "duration:", "location:", "triggers:",
+        "patient_name", "consultation_type", "mobile_number", "selected_day",
+        "campus_id", "start_time", "payment_mode", "function", "parameter",
+        "record", "recording", "save", "saving", "store", "storing"
+      ];
+      
+      // Check if any of these terms are present
+      const hasProblem = problematicTerms.some(term => 
+        originalText.toLowerCase().includes(term.toLowerCase())
+      );
+      
+      if (hasProblem) {
+        // NUCLEAR OPTION: Use a completely safe replacement message
+        console.log("CRITICAL: Found problematic text, using safe replacement");
+        event.text = "I understand. Let me help you with that.";
+      }
+    }
+    
+    return event;
+  });
   
-  // Step 2: List of words to filter out completely
-  const filterWords = [
-    "record_symptom", "book_appointment", "check_appointment", "fetch_slots",
-    "symptom", "severity", "duration", "location", "triggers",
-    "patient_name", "consultation_type", "mobile_number", "selected_day",
-    "campus_id", "start_time", "payment_mode", "week_selection",
-    "function", "parameter", "tool", "api", "database"
-  ];
+  // Initialize LLM Helper with function calling for Meta Llama
+  const llmHelper = voiceClient.registerHelper(
+    "llm",
+    new LLMHelper({
+      callbacks: {}
+    })
+  );
   
-  // Step 3: Remove any sentences containing these words
-  // Create a regex that matches sentences containing any of these words
-  const wordsPattern = new RegExp(`[^.!?]*\\b(${filterWords.join("|")})\\b[^.!?]*[.!?]`, "gis");
-  cleanedText = cleanedText.replace(wordsPattern, "");
+  // Handle function calls from Meta Llama
+  llmHelper.handleFunctionCall(async (fn) => {
+    console.log("Function call received:", fn.functionName, fn.arguments);
+    
+    // Handle symptom recording
+    if (fn.functionName === "record_symptom") {
+      const args = fn.arguments;
+      try {
+        // Call our symptoms API to store the symptom
+        const response = await fetch('/api/symptoms', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            symptom: args.symptom,
+            severity: args.severity,
+            duration: args.duration,
+            location: args.location,
+            triggers: args.triggers,
+            sessionId: sessionId, // Use consistent session ID
+          }),
+        });
+        
+        const result = await response.json();
+        console.log("Symptom recorded:", result);
+        
+        // Return the result to the LLM so it can continue the conversation
+        return {
+          success: true,
+          symptom: args.symptom,
+          recorded: true,
+          message: `Successfully recorded symptom: ${args.symptom}`
+        };
+      } catch (error) {
+        console.error('Error recording symptom:', error);
+        return {
+          success: false,
+          error: 'Failed to record symptom'
+        };
+      }
+    }
+    
+    // Handle appointment checking - DIRECT EXTERNAL API CALL
+    if (fn.functionName === "check_appointment") {
+      const args = fn.arguments;
+      let phoneNumber = args.phone_number;
+      
+      console.log("Phone number from function call:", phoneNumber);
+      
+      // Use the test phone number if not provided or if it's a placeholder
+      if (!phoneNumber || 
+          phoneNumber === "patient_phone_number" || 
+          phoneNumber === "patient's phone number") {
+        phoneNumber = '9873219957';
+      }
+      
+      try {
+        // CALLING EXTERNAL API DIRECTLY
+        const userId = '1'; // Default user ID
+        const apiUrl = `https://api-dev.physiotattva247.com/follow-up-appointments/${encodeURIComponent(phoneNumber)}?user_id=${userId}`;
+        
+        console.log("Calling external API directly:", apiUrl);
+        
+        const response = await fetch(apiUrl, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            // Add any required authentication headers here if needed
+          },
+          cache: 'no-store' // Disable caching
+        });
+        
+        console.log("API response status:", response.status);
+        
+        // Only proceed if we get a successful response
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status} ${response.statusText}`);
+        }
+        
+        // Parse the API response
+        const data = await response.json();
+        console.log("API response data:", data);
+        
+        // Format the appointment data for the LLM
+        let formattedAppointments = [];
+        
+        // Check if data exists and has appointment
+        if (data && data.success && data.appointment) {
+          // Format datetime properly
+          const startDate = new Date(data.appointment.startDateTime);
+          const formattedDate = startDate.toLocaleDateString('en-US', { 
+            weekday: 'long', 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric' 
+          });
+          const formattedTime = startDate.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+          });
+          
+          formattedAppointments.push({
+            date: formattedDate,
+            time: formattedTime,
+            doctor: data.appointment.doctor,
+            type: data.appointment.consultationType,
+            campus: data.appointment.campus || "Online",
+            status: data.appointment.status
+          });
+        }
+        
+        // Return the formatted appointments to the LLM
+        return {
+          success: true,
+          phone_number: phoneNumber,
+          has_appointments: formattedAppointments.length > 0,
+          appointments: formattedAppointments,
+          appointment_count: formattedAppointments.length,
+          message: formattedAppointments.length > 0 
+            ? `Found ${formattedAppointments.length} upcoming appointment for phone number ${phoneNumber}` 
+            : `No upcoming appointments found for phone number ${phoneNumber}`
+        };
+      } catch (error) {
+        console.error('Error calling external appointment API:', error);
+        
+        // Return error information without mock data
+        return {
+          success: false,
+          phone_number: phoneNumber,
+          has_appointments: false,
+          appointments: [],
+          appointment_count: 0,
+          error: error.message,
+          message: `Unable to retrieve appointments for ${phoneNumber}. Please try again later.`
+        };
+      }
+    }
+
+    // Handle slot fetching - DIRECT EXTERNAL API CALL
+    if (fn.functionName === "fetch_slots") {
+      const args = fn.arguments;
+      console.log("Slot fetch arguments:", args);
+      
+      try {
+        // Build query params from arguments
+        const weekSelection = args.week_selection || "this week";
+        const selectedDay = args.selected_day;
+        const consultationType = args.consultation_type || "Online";
+        const campusId = args.campus_id || "Indiranagar";
+        const userId = '1'; // Default user ID
+        
+        // Validate required fields
+        if (!selectedDay) {
+          throw new Error("Day of the week is required");
+        }
+        
+        // Convert day string to proper format (mon, tue, etc.)
+        const day = selectedDay.toLowerCase().substring(0, 3);
+        
+        // CALLING EXTERNAL API DIRECTLY
+        const apiUrl = `https://api-dev.physiotattva247.com/fetch-slots?week_selection=${encodeURIComponent(weekSelection)}&selected_day=${encodeURIComponent(day)}&consultation_type=${encodeURIComponent(consultationType)}&campus_id=${encodeURIComponent(campusId)}&user_id=${userId}`;
+        
+        console.log("Calling slots API directly:", apiUrl);
+        
+        const response = await fetch(apiUrl, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          cache: 'no-store' // Disable caching
+        });
+        
+        console.log("API response status:", response.status);
+        
+        // Only proceed if we get a successful response
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status} ${response.statusText}`);
+        }
+        
+        // Parse the API response
+        const data = await response.json();
+        console.log("Slots API response data:", data);
+        
+        // Extract available slots
+        const availableSlots = [];
+        if (data && data.success && data.hourly_slots) {
+          // Process hourly slots
+          for (const [slotKey, availability] of Object.entries(data.hourly_slots)) {
+            if (availability === "available") {
+              // Extract time range from slot key (e.g., "slot_available_9-10" -> "9-10")
+              const timeRange = slotKey.replace("slot_available_", "");
+              
+              // Format for better readability (e.g., "9-10" -> "9:00 AM - 10:00 AM")
+              const [startHour, endHour] = timeRange.split('-').map(Number);
+              const formattedSlot = {
+                timeRange,
+                start_time: `${startHour}:00 ${startHour >= 12 ? 'PM' : 'AM'}`,
+                formatted: `${startHour > 12 ? startHour - 12 : startHour}:00 ${startHour >= 12 ? 'PM' : 'AM'} - ${endHour > 12 ? endHour - 12 : endHour}:00 ${endHour >= 12 ? 'PM' : 'AM'}`
+              };
+              
+              availableSlots.push(formattedSlot);
+            }
+          }
+        }
+        
+        // Save the slot data to localStorage for booking reference
+        localStorage.setItem('physiotattva_slot_data', JSON.stringify({
+          date: data?.search_criteria?.date,
+          consultation_type: consultationType,
+          campus_id: campusId,
+          week_selection: weekSelection,
+          selected_day: selectedDay,
+          available_slots: availableSlots
+        }));
+        
+        // Return formatted slots to the LLM
+        return {
+          success: true,
+          date: data?.search_criteria?.date,
+          available_slots: availableSlots,
+          total_available: availableSlots.length,
+          consultation_type: consultationType,
+          campus: campusId,
+          message: availableSlots.length > 0
+            ? `Found ${availableSlots.length} available slots for ${data?.search_criteria?.date} at ${campusId}`
+            : `No available slots found for ${data?.search_criteria?.date} at ${campusId}`
+        };
+      } catch (error) {
+        console.error('Error fetching slots:', error);
+        
+        // Return error information
+        return {
+          success: false,
+          error: error.message,
+          message: `Unable to fetch available slots. Please try again or select a different day.`
+        };
+      }
+    }
+    
+    // Handle appointment booking - DIRECT EXTERNAL API CALL
+    if (fn.functionName === "book_appointment") {
+      const args = fn.arguments;
+      console.log("Booking appointment with arguments:", args);
+      
+      try {
+        // Get saved slot data if available (for reference)
+        const savedSlotData = localStorage.getItem('physiotattva_slot_data');
+        let slotData = savedSlotData ? JSON.parse(savedSlotData) : null;
+        
+        // Required booking params
+        const weekSelection = args.week_selection || (slotData?.week_selection || "this week");
+        const selectedDay = args.selected_day || (slotData?.selected_day || "mon");
+        const startTime = args.start_time;
+        const consultationType = args.consultation_type || (slotData?.consultation_type || "Online");
+        const campusId = args.campus_id || (slotData?.campus_id || "Indiranagar");
+        const specialityId = args.speciality_id || "Physiotherapist";
+        const patientName = args.patient_name;
+        const mobileNumber = args.mobile_number;
+        const paymentMode = args.payment_mode || "pay now";
+        const userId = '1'; // Default user ID
+        
+        // Validate required fields
+        if (!selectedDay || !startTime || !consultationType || !patientName || !mobileNumber) {
+          throw new Error("Missing required booking information");
+        }
+        
+        // Book the appointment
+        const apiUrl = `https://api-dev.physiotattva247.com/book-appointment`;
+        
+        console.log("Calling booking API directly:", apiUrl);
+        
+        const requestBody = {
+          week_selection: weekSelection,
+          selected_day: selectedDay.toLowerCase().substring(0, 3),
+          start_time: startTime,
+          consultation_type: consultationType,
+          campus_id: campusId,
+          speciality_id: specialityId,
+          user_id: userId,
+          patient_name: patientName,
+          mobile_number: mobileNumber,
+          payment_mode: paymentMode
+        };
+        
+        console.log("Booking request body:", requestBody);
+        
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+          cache: 'no-store' // Disable caching
+        });
+        
+        console.log("API response status:", response.status);
+        
+        // Only proceed if we get a successful response
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status} ${response.statusText}`);
+        }
+        
+        // Parse the API response
+        const data = await response.json();
+        console.log("Booking API response data:", data);
+        
+        // Save the booking info for display
+        if (data.success && data.appointmentInfo) {
+          localStorage.setItem('physiotattva_current_booking', JSON.stringify({
+            doctor: data.appointmentInfo.appointed_doctor,
+            date: data.appointmentInfo.calculated_date,
+            startDateTime: data.appointmentInfo.startDateTime,
+            consultationType: data.appointmentInfo.consultation_type,
+            leadId: data.appointmentInfo.lead_id,
+            paymentMode: data.appointmentInfo.payment_mode,
+            paymentUrl: data.payment?.short_url,
+            referenceId: data.payment?.reference_id,
+            patientName: patientName,
+            mobileNumber: mobileNumber
+          }));
+        }
+        
+        // Format booking response for LLM
+        const bookingResponse = {
+          success: data.success,
+          appointment_details: {
+            doctor: data.appointmentInfo?.appointed_doctor,
+            date: data.appointmentInfo?.calculated_date,
+            time: new Date(data.appointmentInfo?.startDateTime).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: true
+            }),
+            type: data.appointmentInfo?.consultation_type,
+            campus: campusId,
+            patient: patientName,
+            mobile: mobileNumber
+          },
+          payment_details: {
+            mode: data.appointmentInfo?.payment_mode,
+            url: data.payment?.short_url,
+            reference: data.payment?.reference_id
+          },
+          message: data.success 
+            ? `Appointment successfully booked with ${data.appointmentInfo?.appointed_doctor} on ${data.appointmentInfo?.calculated_date}.`
+            : `Unable to book appointment. Please try again later.`
+        };
+        
+        // Dispatch custom event to update booking UI
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('appointment_booked', { 
+            detail: bookingResponse
+          }));
+        }
+      
+        return bookingResponse;
+      } catch (error) {
+        console.error('Error booking appointment:', error);
+        
+        // Return error information
+        return {
+          success: false,
+          error: error.message,
+          message: `Unable to book the appointment. Please try again later.`
+        };
+      }
+    }
   
-  // Step 4: Remove any pattern that looks like parameter:value
-  cleanedText = cleanedText.replace(/\w+\s*:\s*\w+/gi, "");
+    return null; // Return null for unhandled function calls
+  });
   
-  // Step 5: Remove phrases about recording or noting
-  const actionVerbs = [
-    "record", "recording", "note", "noting", "save", "saving", 
-    "track", "tracking", "document", "documenting", "log", "logging"
-  ];
-  const verbPattern = new RegExp(`[^.!?]*(${actionVerbs.join("|")})\\b[^.!?]*[.!?]`, "gis");
-  cleanedText = cleanedText.replace(verbPattern, "");
-  
-  // Step 6: Remove any JSON-like structures
-  cleanedText = cleanedText.replace(/\{.*?\}/gs, "");
-  
-  // Step 7: Clean up any double spaces or empty lines
-  cleanedText = cleanedText.replace(/\s+/g, " ").trim();
-  
-  // Log cleaned text for debugging
-  console.log("Cleaned text:", cleanedText);
-  
-  return cleanedText;
+  return voiceClient;
 }
 
 export default function Home() { 
   const [showSplash, setShowSplash] = useState(true); 
   const voiceClientRef = useRef(null); 
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState(null);
   
   // Initialize or retrieve session ID on component mount
   useEffect(() => {
@@ -92,442 +482,19 @@ export default function Home() {
     } 
     
     try { 
-      // Create RTVIClient with the same configuration
-      const voiceClient = new RTVIClient({ 
-        transport: new DailyTransport(), 
-        params: { 
-          baseUrl: process.env.NEXT_PUBLIC_BASE_URL || "/api", 
-          endpoints: endpoints, 
-          requestData: { 
-            services: defaultServices, 
-            config: defaultConfig, 
-            bot_profile: defaultBotProfile, 
-            max_duration: defaultMaxDuration,
-          }, 
-        }, 
-        timeout: BOT_READY_TIMEOUT, 
-        enableMic: true, 
-        enableCam: false, 
-      }); 
-      
-      // Add custom event listener for text cleanup - THIS IS THE KEY ADDITION
-      // This will intercept any text before it's sent to TTS and clean it
-      if (voiceClient.on) {
-        console.log("Adding TTS text cleaning middleware");
-        
-        // This intercepts the text before it goes to TTS
-        voiceClient.on("beforeMessageToSpeech", (event) => {
-          console.log("Intercepting message for TTS cleaning:", event);
-          
-          if (event && event.text) {
-            // Clean the text to remove any function references
-            event.text = cleanTextForTTS(event.text);
-          }
-          
-          return event;
-        });
-      }
+      // Use our safe voice client creator instead of the normal setup
+      const voiceClient = createSafeVoiceClient(sessionId);
       
       voiceClient.on("botReady", () => { 
-        console.log("Bot is ready!"); 
+        console.log("Bot is ready with nuclear text protection!"); 
       }); 
       
       voiceClient.on("error", (error) => { 
         console.error("Voice client error:", error); 
-      }); 
-      
-      // Initialize LLM Helper with function calling for Meta Llama
-      const llmHelper = voiceClient.registerHelper(
-        "llm",
-        new LLMHelper({
-          callbacks: {
-            // Add message preprocessing here too for extra safety
-            onMessage: (message) => {
-              if (message && message.content) {
-                // Clean any function calls from the message content
-                message.content = cleanTextForTTS(message.content);
-              }
-              return message;
-            }
-          }
-        })
-      ) as LLMHelper;
-      
-      // Handle function calls from Meta Llama
-      llmHelper.handleFunctionCall(async (fn: FunctionCallParams) => {
-        console.log("Function call received:", fn.functionName, fn.arguments);
-        
-        // Handle symptom recording
-        if (fn.functionName === "record_symptom") {
-          const args = fn.arguments as any;
-          try {
-            // Call our symptoms API to store the symptom
-            const response = await fetch('/api/symptoms', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                symptom: args.symptom,
-                severity: args.severity,
-                duration: args.duration,
-                location: args.location,
-                triggers: args.triggers,
-                sessionId: sessionId, // Use consistent session ID
-              }),
-            });
-            
-            const result = await response.json();
-            console.log("Symptom recorded:", result);
-            
-            // Return the result to the LLM so it can continue the conversation
-            return {
-              success: true,
-              symptom: args.symptom,
-              recorded: true,
-              message: `Successfully recorded symptom: ${args.symptom}`
-            };
-          } catch (error) {
-            console.error('Error recording symptom:', error);
-            return {
-              success: false,
-              error: 'Failed to record symptom'
-            };
-          }
-        }
-        
-        // Handle appointment checking - DIRECT EXTERNAL API CALL
-        if (fn.functionName === "check_appointment") {
-          const args = fn.arguments as any;
-          let phoneNumber = args.phone_number;
-          
-          console.log("Phone number from function call:", phoneNumber);
-          
-          // Use the test phone number if not provided or if it's a placeholder
-          if (!phoneNumber || 
-              phoneNumber === "patient_phone_number" || 
-              phoneNumber === "patient's phone number") {
-            phoneNumber = '9873219957';
-          }
-          
-          try {
-            // CALLING EXTERNAL API DIRECTLY
-            const userId = '1'; // Default user ID
-            const apiUrl = `https://api-dev.physiotattva247.com/follow-up-appointments/${encodeURIComponent(phoneNumber)}?user_id=${userId}`;
-            
-            console.log("Calling external API directly:", apiUrl);
-            
-            const response = await fetch(apiUrl, {
-              method: 'GET',
-              headers: {
-                'Content-Type': 'application/json',
-                // Add any required authentication headers here if needed
-              },
-              cache: 'no-store' // Disable caching
-            });
-            
-            console.log("API response status:", response.status);
-            
-            // Only proceed if we get a successful response
-            if (!response.ok) {
-              throw new Error(`API error: ${response.status} ${response.statusText}`);
-            }
-            
-            // Parse the API response
-            const data = await response.json();
-            console.log("API response data:", data);
-            
-            // Format the appointment data for the LLM
-            let formattedAppointments = [];
-            
-            // Check if data exists and has appointment
-            if (data && data.success && data.appointment) {
-              // Format datetime properly
-              const startDate = new Date(data.appointment.startDateTime);
-              const formattedDate = startDate.toLocaleDateString('en-US', { 
-                weekday: 'long', 
-                year: 'numeric', 
-                month: 'long', 
-                day: 'numeric' 
-              });
-              const formattedTime = startDate.toLocaleTimeString('en-US', {
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: true
-              });
-              
-              formattedAppointments.push({
-                date: formattedDate,
-                time: formattedTime,
-                doctor: data.appointment.doctor,
-                type: data.appointment.consultationType,
-                campus: data.appointment.campus || "Online",
-                status: data.appointment.status
-              });
-            }
-            
-            // Return the formatted appointments to the LLM
-            return {
-              success: true,
-              phone_number: phoneNumber,
-              has_appointments: formattedAppointments.length > 0,
-              appointments: formattedAppointments,
-              appointment_count: formattedAppointments.length,
-              message: formattedAppointments.length > 0 
-                ? `Found ${formattedAppointments.length} upcoming appointment for phone number ${phoneNumber}` 
-                : `No upcoming appointments found for phone number ${phoneNumber}`
-            };
-          } catch (error) {
-            console.error('Error calling external appointment API:', error);
-            
-            // Return error information without mock data
-            return {
-              success: false,
-              phone_number: phoneNumber,
-              has_appointments: false,
-              appointments: [],
-              appointment_count: 0,
-              error: (error as Error).message,
-              message: `Unable to retrieve appointments for ${phoneNumber}. Please try again later.`
-            };
-          }
-        }
-
-        // Handle slot fetching - DIRECT EXTERNAL API CALL
-        if (fn.functionName === "fetch_slots") {
-          const args = fn.arguments as any;
-          console.log("Slot fetch arguments:", args);
-          
-          try {
-            // Build query params from arguments
-            const weekSelection = args.week_selection || "this week";
-            const selectedDay = args.selected_day;
-            const consultationType = args.consultation_type || "Online";
-            const campusId = args.campus_id || "Indiranagar";
-            const userId = '1'; // Default user ID
-            
-            // Validate required fields
-            if (!selectedDay) {
-              throw new Error("Day of the week is required");
-            }
-            
-            // Convert day string to proper format (mon, tue, etc.)
-            const day = selectedDay.toLowerCase().substring(0, 3);
-            
-            // CALLING EXTERNAL API DIRECTLY
-            const apiUrl = `https://api-dev.physiotattva247.com/fetch-slots?week_selection=${encodeURIComponent(weekSelection)}&selected_day=${encodeURIComponent(day)}&consultation_type=${encodeURIComponent(consultationType)}&campus_id=${encodeURIComponent(campusId)}&user_id=${userId}`;
-            
-            console.log("Calling slots API directly:", apiUrl);
-            
-            const response = await fetch(apiUrl, {
-              method: 'GET',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              cache: 'no-store' // Disable caching
-            });
-            
-            console.log("API response status:", response.status);
-            
-            // Only proceed if we get a successful response
-            if (!response.ok) {
-              throw new Error(`API error: ${response.status} ${response.statusText}`);
-            }
-            
-            // Parse the API response
-            const data = await response.json();
-            console.log("Slots API response data:", data);
-            
-            // Extract available slots
-            const availableSlots = [];
-            if (data && data.success && data.hourly_slots) {
-              // Process hourly slots
-              for (const [slotKey, availability] of Object.entries(data.hourly_slots)) {
-                if (availability === "available") {
-                  // Extract time range from slot key (e.g., "slot_available_9-10" -> "9-10")
-                  const timeRange = slotKey.replace("slot_available_", "");
-                  
-                  // Format for better readability (e.g., "9-10" -> "9:00 AM - 10:00 AM")
-                  const [startHour, endHour] = timeRange.split('-').map(Number);
-                  const formattedSlot = {
-                    timeRange,
-                    start_time: `${startHour}:00 ${startHour >= 12 ? 'PM' : 'AM'}`,
-                    formatted: `${startHour > 12 ? startHour - 12 : startHour}:00 ${startHour >= 12 ? 'PM' : 'AM'} - ${endHour > 12 ? endHour - 12 : endHour}:00 ${endHour >= 12 ? 'PM' : 'AM'}`
-                  };
-                  
-                  availableSlots.push(formattedSlot);
-                }
-              }
-            }
-            
-            // Save the slot data to localStorage for booking reference
-            localStorage.setItem('physiotattva_slot_data', JSON.stringify({
-              date: data?.search_criteria?.date,
-              consultation_type: consultationType,
-              campus_id: campusId,
-              week_selection: weekSelection,
-              selected_day: selectedDay,
-              available_slots: availableSlots
-            }));
-            
-            // Return formatted slots to the LLM
-            return {
-              success: true,
-              date: data?.search_criteria?.date,
-              available_slots: availableSlots,
-              total_available: availableSlots.length,
-              consultation_type: consultationType,
-              campus: campusId,
-              message: availableSlots.length > 0
-                ? `Found ${availableSlots.length} available slots for ${data?.search_criteria?.date} at ${campusId}`
-                : `No available slots found for ${data?.search_criteria?.date} at ${campusId}`
-            };
-          } catch (error) {
-            console.error('Error fetching slots:', error);
-            
-            // Return error information
-            return {
-              success: false,
-              error: (error as Error).message,
-              message: `Unable to fetch available slots. Please try again or select a different day.`
-            };
-          }
-        }
-        
-        // Handle appointment booking - DIRECT EXTERNAL API CALL
-        if (fn.functionName === "book_appointment") {
-          const args = fn.arguments as any;
-          console.log("Booking appointment with arguments:", args);
-          
-          try {
-            // Get saved slot data if available (for reference)
-            const savedSlotData = localStorage.getItem('physiotattva_slot_data');
-            let slotData = savedSlotData ? JSON.parse(savedSlotData) : null;
-            
-            // Required booking params
-            const weekSelection = args.week_selection || (slotData?.week_selection || "this week");
-            const selectedDay = args.selected_day || (slotData?.selected_day || "mon");
-            const startTime = args.start_time;
-            const consultationType = args.consultation_type || (slotData?.consultation_type || "Online");
-            const campusId = args.campus_id || (slotData?.campus_id || "Indiranagar");
-            const specialityId = args.speciality_id || "Physiotherapist";
-            const patientName = args.patient_name;
-            const mobileNumber = args.mobile_number;
-            const paymentMode = args.payment_mode || "pay now";
-            const userId = '1'; // Default user ID
-            
-            // Validate required fields
-            if (!selectedDay || !startTime || !consultationType || !patientName || !mobileNumber) {
-              throw new Error("Missing required booking information");
-            }
-            
-            // Book the appointment
-            const apiUrl = `https://api-dev.physiotattva247.com/book-appointment`;
-            
-            console.log("Calling booking API directly:", apiUrl);
-            
-            const requestBody = {
-              week_selection: weekSelection,
-              selected_day: selectedDay.toLowerCase().substring(0, 3),
-              start_time: startTime,
-              consultation_type: consultationType,
-              campus_id: campusId,
-              speciality_id: specialityId,
-              user_id: userId,
-              patient_name: patientName,
-              mobile_number: mobileNumber,
-              payment_mode: paymentMode
-            };
-            
-            console.log("Booking request body:", requestBody);
-            
-            const response = await fetch(apiUrl, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify(requestBody),
-              cache: 'no-store' // Disable caching
-            });
-            
-            console.log("API response status:", response.status);
-            
-            // Only proceed if we get a successful response
-            if (!response.ok) {
-              throw new Error(`API error: ${response.status} ${response.statusText}`);
-            }
-            
-            // Parse the API response
-            const data = await response.json();
-            console.log("Booking API response data:", data);
-            
-            // Save the booking info for display
-            if (data.success && data.appointmentInfo) {
-              localStorage.setItem('physiotattva_current_booking', JSON.stringify({
-                doctor: data.appointmentInfo.appointed_doctor,
-                date: data.appointmentInfo.calculated_date,
-                startDateTime: data.appointmentInfo.startDateTime,
-                consultationType: data.appointmentInfo.consultation_type,
-                leadId: data.appointmentInfo.lead_id,
-                paymentMode: data.appointmentInfo.payment_mode,
-                paymentUrl: data.payment?.short_url,
-                referenceId: data.payment?.reference_id,
-                patientName: patientName,
-                mobileNumber: mobileNumber
-              }));
-            }
-            
-            // Format booking response for LLM
-            const bookingResponse = {
-              success: data.success,
-              appointment_details: {
-                doctor: data.appointmentInfo?.appointed_doctor,
-                date: data.appointmentInfo?.calculated_date,
-                time: new Date(data.appointmentInfo?.startDateTime).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  hour12: true
-                }),
-                type: data.appointmentInfo?.consultation_type,
-                campus: campusId,
-                patient: patientName,
-                mobile: mobileNumber
-              },
-              payment_details: {
-                mode: data.appointmentInfo?.payment_mode,
-                url: data.payment?.short_url,
-                reference: data.payment?.reference_id
-              },
-              message: data.success 
-                ? `Appointment successfully booked with ${data.appointmentInfo?.appointed_doctor} on ${data.appointmentInfo?.calculated_date}.`
-                : `Unable to book appointment. Please try again later.`
-            };
-            
-            // Dispatch custom event to update booking UI
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('appointment_booked', { 
-                detail: bookingResponse
-              }));
-            }
-          
-            return bookingResponse;
-          } catch (error) {
-            console.error('Error booking appointment:', error);
-            
-            // Return error information
-            return {
-              success: false,
-              error: (error as Error).message,
-              message: `Unable to book the appointment. Please try again later.`
-            };
-          }
-        }
-      
-        return null; // Return null for unhandled function calls
       });
-    
+      
       voiceClientRef.current = voiceClient;
-      console.log("Voice client initialized with Meta Llama function calling and text cleaning middleware");
+      console.log("Voice client initialized with extreme safety measures");
     } catch (error) { 
       console.error("Error initializing voice client:", error); 
     } 
