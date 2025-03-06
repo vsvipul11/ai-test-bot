@@ -1,12 +1,11 @@
 // components/Session.tsx
-import { Clipboard, HeartPulse, Loader2, LogOut, MessageCircle, Settings, StopCircle, Calendar, Activity, Mic, MicOff } from "lucide-react";
+import { Clipboard, HeartPulse, Loader2, LogOut, MessageCircle, Settings, StopCircle, Calendar } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   PipecatMetricsData,
   RTVIClientConfigOption,
   RTVIEvent,
-  RTVIMessage,
   TransportState,
 } from "realtime-ai";
 import { useRTVIClient, useRTVIClientEvent } from "realtime-ai-react";
@@ -18,12 +17,18 @@ import * as Card from "../ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import SymptomsDisplay from "../SymptomsDisplay";
 import AppointmentDisplay from "../AppointmentDisplay";
+import ChatLog from "../ChatLogs";
 import { useSymptoms } from "../SymptomsContext";
 import BookingDisplay from "../BookingDisplay";
-import AvailableSlotsPopup from "../AvailableSlotsPopup";
+import SlotSelectionModal from "../SlotSelectionModal";
+import LocationSelectionModal from "../LocationSelectionModal";
 
 import Agent from "./Agent";
 import Stats from "./Stats";
+import UserMicBubble from "./UserMicBubble";
+import * as Dialog from "../ui/dialog";
+import { Input } from "../ui/input";
+import { Label } from "../ui/label";
 
 let stats_aggregator: StatsAggregator;
 
@@ -41,20 +46,47 @@ export const Session = React.memo(
     const [showConfig, setShowConfig] = useState<boolean>(false);
     const [showStats, setShowStats] = useState<boolean>(false);
     const [muted, setMuted] = useState(startAudioOff);
-    const [activeTab, setActiveTab] = useState<'actions' | 'symptoms' | 'appointments'>('symptoms');
-    const { refreshSymptoms, updateSymptoms } = useSymptoms();
-    
-    // New state for function calls display
-    const [functionCalls, setFunctionCalls] = useState([]);
-    const [pendingSymptoms, setPendingSymptoms] = useState([]);
-    const [showSlots, setShowSlots] = useState(false);
-    const [slots, setSlots] = useState([]);
-    const [slotDetails, setSlotDetails] = useState({});
-    const [processingMsg, setProcessingMsg] = useState("");
+    const [phoneNumber, setPhoneNumber] = useState<string>("9873219957");
+    const [phoneInputVisible, setPhoneInputVisible] = useState<boolean>(true);
+    const { refreshSymptoms } = useSymptoms();
+    const [showSlotSelection, setShowSlotSelection] = useState<boolean>(false);
+    const [showLocationSelection, setShowLocationSelection] = useState<boolean>(false);
+    const [slotData, setSlotData] = useState(null);
+    const [savedConsultationType, setSavedConsultationType] = useState<string>("Online");
 
     const modalRef = useRef<HTMLDialogElement>(null);
 
+    // Event listeners for custom events
+    useEffect(() => {
+      // Listen for slot fetch event to show slot selection modal
+      const handleSlotFetch = (event) => {
+        if (event.detail && event.detail.success) {
+          setSlotData(event.detail);
+          setShowSlotSelection(true);
+        }
+      };
+
+      // Listen for consultation type change to show location selection
+      const handleConsultationTypeChange = (event) => {
+        if (event.detail && event.detail === "In-Person") {
+          setSavedConsultationType("In-Person");
+          setShowLocationSelection(true);
+        } else if (event.detail) {
+          setSavedConsultationType(event.detail);
+        }
+      };
+
+      window.addEventListener('fetch_slots_completed', handleSlotFetch);
+      window.addEventListener('consultation_type_change', handleConsultationTypeChange);
+
+      return () => {
+        window.removeEventListener('fetch_slots_completed', handleSlotFetch);
+        window.removeEventListener('consultation_type_change', handleConsultationTypeChange);
+      };
+    }, []);
+
     // ---- Voice Client Events
+
     useRTVIClientEvent(
       RTVIEvent.Metrics,
       useCallback((metrics: PipecatMetricsData) => {
@@ -80,81 +112,14 @@ export const Session = React.memo(
       }, [hasStarted])
     );
 
-    // Listen for function calls from the bot
-    useRTVIClientEvent(RTVIEvent.LLMFunctionCall, (message) => {
-      const functionCall = message.data;
-      if (functionCall) {
-        setFunctionCalls(prev => [...prev, {
-          id: Date.now(),
-          timestamp: new Date(),
-          ...functionCall
-        }]);
-        
-        // Set processing message to let user know what's happening
-        setProcessingMsg(`Processing: ${functionCall.functionName.replace(/_/g, ' ')}`);
-        
-        // Handle specific function calls
-        if (functionCall.functionName === "record_symptom") {
-          const symptomData = functionCall.arguments;
-          if (symptomData) {
-            setPendingSymptoms(prev => [...prev, {
-              symptom: symptomData.symptom,
-              severity: symptomData.severity,
-              duration: symptomData.duration,
-              location: symptomData.location,
-              triggers: symptomData.triggers,
-              timestamp: new Date().toISOString()
-            }]);
-          }
-        } else if (functionCall.functionName === "fetch_slots") {
-          // Will be populated when the function returns
-        }
-      }
-    });
-
-    // Listen for function call results
-    useRTVIClientEvent(RTVIEvent.LLMFunctionCallResult, (message) => {
-      const result = message.data;
-      setProcessingMsg("");
+    // Poll for symptoms periodically
+    useEffect(() => {
+      const intervalId = setInterval(() => {
+        refreshSymptoms();
+      }, 5000);
       
-      if (result && result.functionName) {
-        // Update the function call with its result
-        setFunctionCalls(prev => prev.map(fc => 
-          fc.functionName === result.functionName ? {...fc, result: result.result} : fc
-        ));
-        
-        // Handle specific function results
-        if (result.functionName === "fetch_slots" && result.result && result.result.available_slots) {
-          setSlots(result.result.available_slots);
-          setSlotDetails({
-            date: result.result.date,
-            consultationType: result.result.consultation_type,
-            campus: result.result.campus
-          });
-          setShowSlots(true);
-        } else if (result.functionName === "book_appointment" && result.result && result.result.success) {
-          // Handle booking success
-        }
-      }
-    });
-
-    // Listen for assessment completion event
-    useRTVIClientEvent(RTVIEvent.BotUtterance, (message) => {
-      const content = message.data;
-      
-      // Check if this is the assessment completion message
-      if (typeof content === 'string' && 
-          (content.includes("assessment complete") || 
-          content.includes("symptom assessment") || 
-          content.includes("I've recorded all your symptoms"))) {
-        
-        // Transfer pending symptoms to the symptoms context
-        if (pendingSymptoms.length > 0) {
-          updateSymptoms(pendingSymptoms);
-          setPendingSymptoms([]);
-        }
-      }
-    });
+      return () => clearInterval(intervalId);
+    }, [refreshSymptoms]);
 
     // ---- Effects
 
@@ -200,11 +165,18 @@ export const Session = React.memo(
       setMuted(!muted);
     }
 
-    // Tab button styles
-    const getTabStyles = (tab: string) => {
-      return activeTab === tab 
-        ? "text-blue-600 border-b-2 border-blue-600 font-medium" 
-        : "text-gray-500 hover:text-gray-700 hover:border-gray-300";
+    const handlePhoneSubmit = (e) => {
+      e.preventDefault();
+      if (phoneNumber && phoneNumber.length >= 10) {
+        setPhoneInputVisible(false);
+        // Update the phone number in any context or state that needs it
+        localStorage.setItem('patient_phone_number', phoneNumber);
+        
+        // Dispatch a custom event to notify components that need to update
+        window.dispatchEvent(new CustomEvent('phone_number_updated', { 
+          detail: phoneNumber 
+        }));
+      }
     };
 
     return (
@@ -241,6 +213,41 @@ export const Session = React.memo(
           </Card.Card>
         </dialog>
 
+        {/* Phone Number Input Dialog */}
+        {phoneInputVisible && (
+          <Dialog.Dialog open={phoneInputVisible} onOpenChange={setPhoneInputVisible}>
+            <Dialog.DialogContent className="sm:max-w-md">
+              <Dialog.DialogHeader>
+                <Dialog.DialogTitle>Enter Your Mobile Number</Dialog.DialogTitle>
+                <Dialog.DialogDescription>
+                  Please enter your mobile number to proceed with the consultation and view your appointments.
+                </Dialog.DialogDescription>
+              </Dialog.DialogHeader>
+              <form onSubmit={handlePhoneSubmit}>
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="phoneNumber" className="text-right">
+                      Mobile Number
+                    </Label>
+                    <Input
+                      id="phoneNumber"
+                      value={phoneNumber}
+                      onChange={(e) => setPhoneNumber(e.target.value)}
+                      placeholder="Enter 10 digit number"
+                      className="col-span-3"
+                    />
+                  </div>
+                </div>
+                <Dialog.DialogFooter>
+                  <Button type="submit" disabled={!phoneNumber || phoneNumber.length < 10}>
+                    Proceed
+                  </Button>
+                </Dialog.DialogFooter>
+              </form>
+            </Dialog.DialogContent>
+          </Dialog.Dialog>
+        )}
+
         {showStats &&
           createPortal(
             <Stats
@@ -250,22 +257,27 @@ export const Session = React.memo(
             document.getElementById("tray") || document.body
           )}
 
-        {/* Available slots popup */}
-        {showSlots && (
-          <AvailableSlotsPopup 
-            slots={slots} 
-            details={slotDetails}
-            onClose={() => setShowSlots(false)} 
-          />
-        )}
+        {/* Slot Selection Modal */}
+        <SlotSelectionModal 
+          isOpen={showSlotSelection} 
+          onClose={() => setShowSlotSelection(false)} 
+          slotData={slotData} 
+        />
+
+        {/* Location Selection Modal */}
+        <LocationSelectionModal 
+          isOpen={showLocationSelection} 
+          onClose={() => setShowLocationSelection(false)}
+          consultationType={savedConsultationType}
+        />
 
         {/* Main layout */}
         <div className="w-full max-w-6xl mx-auto p-2 md:p-4 flex flex-col">
           <BookingDisplay />
 
           {/* Main container with responsive design */}
-          <div className="flex flex-col md:flex-row gap-4">
-            {/* Main left column - tabs & content */}
+          <div className="flex flex-col lg:flex-row gap-4">
+            {/* Main left column - chat & controls */}
             <div className="flex-1 flex flex-col">
               <Card.Card className="bg-white shadow-md rounded-xl overflow-hidden border border-gray-200 mb-4">
                 <Card.CardHeader className="bg-gradient-to-r from-blue-600 to-blue-800 text-white py-4 px-6">
@@ -285,139 +297,18 @@ export const Session = React.memo(
                   </div>
                 </Card.CardHeader>
                 
-                {/* Tabs - both mobile and desktop */}
-                <div className="flex border-b">
-                  <button
-                    className={`flex-1 py-3 px-4 text-sm font-medium ${getTabStyles('symptoms')}`}
-                    onClick={() => setActiveTab('symptoms')}
-                  >
-                    <span className="flex items-center justify-center gap-1">
-                      <Clipboard className="h-4 w-4" />
-                      <span className="hidden sm:inline">Symptoms</span>
-                    </span>
-                  </button>
-                  <button
-                    className={`flex-1 py-3 px-4 text-sm font-medium ${getTabStyles('appointments')}`}
-                    onClick={() => setActiveTab('appointments')}
-                  >
-                    <span className="flex items-center justify-center gap-1">
-                      <Calendar className="h-4 w-4" />
-                      <span className="hidden sm:inline">Appointments</span>
-                    </span>
-                  </button>
-                  <button
-                    className={`flex-1 py-3 px-4 text-sm font-medium ${getTabStyles('actions')}`}
-                    onClick={() => setActiveTab('actions')}
-                  >
-                    <span className="flex items-center justify-center gap-1">
-                      <Activity className="h-4 w-4" />
-                      <span className="hidden sm:inline">Actions</span>
-                    </span>
-                  </button>
-                </div>
-                
-                {/* Tab content */}
-                <div className="h-[450px] md:h-[550px] overflow-hidden">
-                  <div className="h-full overflow-y-auto">
-                    {activeTab === 'symptoms' && 
-                      <div className="p-4">
-                        <h2 className="text-lg font-medium mb-3">Your Symptoms</h2>
-                        <SymptomsDisplay />
-                      </div>
-                    }
-                    
-                    {activeTab === 'appointments' && 
-                      <div className="p-4">
-                        <h2 className="text-lg font-medium mb-3">Your Appointments</h2>
-                        <AppointmentDisplay phoneNumber="9873219957" />
-                      </div>
-                    }
-                    
-                    {activeTab === 'actions' && 
-                      <div className="p-4">
-                        <h2 className="text-lg font-medium mb-3">Actions Performed</h2>
-                        <div className="space-y-3">
-                          {functionCalls.length === 0 ? (
-                            <div className="p-4 bg-gray-50 rounded-lg text-center text-gray-500">
-                              No actions have been performed yet. Start speaking to Dr. Riya.
-                            </div>
-                          ) : (
-                            functionCalls.map((fc) => (
-                              <div key={fc.id} className="border rounded-lg overflow-hidden">
-                                <div className="bg-gray-50 p-3 border-b">
-                                  <div className="flex justify-between items-center">
-                                    <h3 className="font-medium text-gray-800 capitalize">
-                                      {fc.functionName.replace(/_/g, ' ')}
-                                    </h3>
-                                    <span className="text-xs text-gray-500">
-                                      {new Date(fc.timestamp).toLocaleTimeString()}
-                                    </span>
-                                  </div>
-                                </div>
-                                <div className="p-3">
-                                  <div className="grid grid-cols-1 gap-2">
-                                    {fc.arguments && Object.entries(fc.arguments).map(([key, value]) => (
-                                      <div key={key} className="text-sm">
-                                        <span className="font-medium text-gray-700 capitalize">{key.replace(/_/g, ' ')}: </span>
-                                        <span className="text-gray-600">{
-                                          typeof value === 'object' 
-                                            ? JSON.stringify(value) 
-                                            : String(value)
-                                        }</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                  
-                                  {fc.result && (
-                                    <div className="mt-3 pt-3 border-t">
-                                      <h4 className="text-sm font-medium text-gray-700 mb-1">Result:</h4>
-                                      {fc.result.success ? (
-                                        <div className="text-sm text-green-600">{fc.result.message}</div>
-                                      ) : (
-                                        <div className="text-sm text-red-600">{fc.result.message || "Error occurred"}</div>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    }
-                  </div>
+                {/* Single view with chat */}
+                <div className="flex-1 h-[350px] md:h-[400px] overflow-hidden">
+                  <ChatLog />
                 </div>
 
-                {/* Microphone and status area */}
-                <div className="px-6 py-4 bg-gray-50 border-t border-gray-200">
-                  <div className="flex flex-col items-center">
-                    {processingMsg && (
-                      <div className="mb-4 p-2 bg-blue-50 text-blue-700 rounded-lg text-sm flex items-center w-full max-w-md">
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        {processingMsg}
-                      </div>
-                    )}
-                    
-                    <Button
-                      size="lg"
-                      onClick={toggleMute}
-                      className={`rounded-full w-16 h-16 ${
-                        muted ? 'bg-blue-500 hover:bg-blue-600' : 'bg-red-500 hover:bg-red-600'
-                      } text-white`}
-                    >
-                      {muted ? (
-                        <Mic className="h-6 w-6" />
-                      ) : (
-                        <MicOff className="h-6 w-6" />
-                      )}
-                    </Button>
-                    
-                    <div className="mt-2 text-center">
-                      <p className="text-sm font-medium">
-                        {muted ? "Click to speak" : "Listening..."}
-                      </p>
-                    </div>
-                  </div>
+                {/* Microphone control */}
+                <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex justify-center">
+                  <UserMicBubble
+                    active={hasStarted}
+                    muted={muted}
+                    handleMute={() => toggleMute()}
+                  />
                 </div>
               </Card.Card>
               
@@ -470,6 +361,42 @@ export const Session = React.memo(
                   End Consultation
                 </Button>
               </div>
+            </div>
+            
+            {/* Right sidebar - Always visible on all screens */}
+            <div className="w-full lg:w-80 space-y-4">
+              {/* Symptoms Card */}
+              <Card.Card className="bg-white shadow-md rounded-xl overflow-hidden border border-gray-200">
+                <Card.CardHeader className="bg-gray-50 py-3 px-4 border-b border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <Card.CardTitle className="text-base font-medium text-gray-800 flex items-center gap-1">
+                      <Clipboard className="h-4 w-4 text-blue-600" />
+                      Recorded Symptoms
+                    </Card.CardTitle>
+                    <Button variant="ghost" size="sm" className="p-1 h-auto" onClick={refreshSymptoms}>
+                      <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                    </Button>
+                  </div>
+                </Card.CardHeader>
+                <Card.CardContent className="px-0 py-0 max-h-[200px] overflow-y-auto">
+                  <SymptomsDisplay />
+                </Card.CardContent>
+              </Card.Card>
+              
+              {/* Appointments Card */}
+              <Card.Card className="bg-white shadow-md rounded-xl overflow-hidden border border-gray-200">
+                <Card.CardHeader className="bg-gray-50 py-3 px-4 border-b border-gray-200">
+                  <Card.CardTitle className="text-base font-medium text-gray-800 flex items-center gap-1">
+                    <Calendar className="h-4 w-4 text-blue-600" />
+                    Your Appointments
+                  </Card.CardTitle>
+                </Card.CardHeader>
+                <Card.CardContent className="px-0 py-0 max-h-[200px] overflow-y-auto">
+                  <AppointmentDisplay phoneNumber={phoneNumber} />
+                </Card.CardContent>
+              </Card.Card>
             </div>
           </div>
         </div>

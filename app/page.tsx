@@ -1,13 +1,11 @@
 "use client"; 
 
 import { DailyTransport } from "@daily-co/realtime-ai-daily"; 
-import { TooltipProvider } from "@radix-ui/react-tooltip"; 
 import { useEffect, useRef, useState } from "react"; 
 import { FunctionCallParams, LLMHelper, RTVIClient } from "realtime-ai"; 
 import { RTVIClientAudio, RTVIClientProvider } from "realtime-ai-react"; 
 import App from "@/components/App"; 
 import { AppProvider } from "@/components/context"; 
-import Header from "@/components/Header"; 
 import Splash from "@/components/Splash";
 import { SymptomsProvider } from "@/components/SymptomsContext";
 import { BookingProvider } from "@/components/BookingContext";
@@ -20,14 +18,21 @@ import {
   endpoints 
 } from "@/rtvi.config"; 
 
-export default function Home() { 
-  const [showSplash, setShowSplash] = useState(true); 
-  const [processingFunction, setProcessingFunction] = useState(false);
-  const voiceClientRef = useRef(null); 
-  const [sessionId, setSessionId] = useState(null);
+// Import Radix UI components directly
+import * as React from 'react';
+import * as TooltipPrimitive from '@radix-ui/react-tooltip';
+
+export default function Home(): React.ReactNode { 
+  const [showSplash, setShowSplash] = useState<boolean>(true); 
+  const [processingFunction, setProcessingFunction] = useState<boolean>(false);
+  const voiceClientRef = useRef<any>(null); 
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [isLoaded, setIsLoaded] = useState<boolean>(false);
   
   // Initialize or retrieve session ID on component mount
   useEffect(() => {
+    if (typeof window === 'undefined') return; // SSR check
+    
     // Check if there's an existing session ID in localStorage
     const savedSessionId = localStorage.getItem('physiotattva_session_id');
     if (savedSessionId) {
@@ -38,6 +43,9 @@ export default function Home() {
       setSessionId(newSessionId);
       localStorage.setItem('physiotattva_session_id', newSessionId);
     }
+    
+    // Set loaded state to prevent flickering
+    setIsLoaded(true);
   }, []);
   
   useEffect(() => { 
@@ -94,24 +102,82 @@ export default function Home() {
         try {
           // Handle symptom recording
           if (fn.functionName === "record_symptom") {
-            // Call our symptoms API to store the symptom
-            const response = await fetch('/api/symptoms', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                symptom: args.symptom,
-                severity: args.severity,
-                duration: args.duration,
-                location: args.location,
-                triggers: args.triggers,
-                sessionId: sessionId,
-              }),
-            });
+            console.log("Recording symptom:", args);
             
-            const result = await response.json();
-            console.log("Symptom recorded:", result);
+            // Default values for missing optional fields
+            const severity = args.severity || 5; // Default severity if not provided
+            const duration = args.duration || "Not specified";
+            const location = args.location || "Not specified";
+            const triggers = args.triggers || "Not specified";
+            
+            // Call our symptoms API to store the symptom
+            try {
+              const response = await fetch('/api/symptoms', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  symptom: args.symptom,
+                  severity,
+                  duration,
+                  location,
+                  triggers,
+                  sessionId: sessionId,
+                }),
+              });
+              
+              if (!response.ok) {
+                throw new Error(`API returned status: ${response.status}`);
+              }
+              
+              const result = await response.json();
+              console.log("Symptom recorded successfully:", result);
+              
+              // Ensure we explicitly dispatch the event
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('symptom_recorded', { 
+                  detail: {
+                    success: true,
+                    symptom: args.symptom,
+                    severity,
+                    duration,
+                    location,
+                    triggers
+                  }
+                }));
+              }
+            } catch (error) {
+              console.error("Error recording symptom:", error);
+              
+              // Fallback - create a mock symptom in localStorage if API fails
+              const existingSymptoms = localStorage.getItem('physiotattva_symptoms');
+              const symptoms = existingSymptoms ? JSON.parse(existingSymptoms) : [];
+              
+              symptoms.push({
+                id: Date.now().toString(),
+                symptom: args.symptom,
+                severity,
+                duration,
+                location,
+                triggers,
+                created_at: new Date().toISOString()
+              });
+              
+              localStorage.setItem('physiotattva_symptoms', JSON.stringify(symptoms));
+              
+              // Still dispatch the event so UI updates
+              window.dispatchEvent(new CustomEvent('symptom_recorded', { 
+                detail: {
+                  success: true,
+                  symptom: args.symptom,
+                  severity,
+                  duration,
+                  location,
+                  triggers
+                }
+              }));
+            }
             
             setProcessingFunction(false);
             return {
@@ -122,6 +188,25 @@ export default function Home() {
             };
           }
           
+          // Handle consultation type setting
+          if (fn.functionName === "set_consultation_type") {
+            const consultationType = args.type;
+            
+            // Dispatch a custom event with the consultation type
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('consultation_type_change', { 
+                detail: consultationType
+              }));
+            }
+            
+            setProcessingFunction(false);
+            return {
+              success: true,
+              consultation_type: consultationType,
+              message: `Consultation type set to ${consultationType}`
+            };
+          }
+          
           // Handle appointment checking
           if (fn.functionName === "check_appointment") {
             let phoneNumber = args.phone_number;
@@ -129,7 +214,9 @@ export default function Home() {
             if (!phoneNumber || 
                 phoneNumber === "patient_phone_number" || 
                 phoneNumber === "patient's phone number") {
-              phoneNumber = '9873219957';
+              // Try to get from localStorage first
+              const savedPhone = localStorage.getItem('patient_phone_number');
+              phoneNumber = savedPhone || '9873219957';
             }
             
             // CALLING EXTERNAL API
@@ -175,6 +262,18 @@ export default function Home() {
                 campus: data.appointment.campus || "Online",
                 status: data.appointment.status
               });
+            }
+            
+            // Dispatch a custom event with the appointment data
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('appointment_check_completed', { 
+                detail: {
+                  success: true,
+                  has_appointments: formattedAppointments.length > 0,
+                  appointments: formattedAppointments,
+                  appointment_count: formattedAppointments.length
+                }
+              }));
             }
             
             setProcessingFunction(false);
@@ -247,6 +346,20 @@ export default function Home() {
               available_slots: availableSlots
             }));
             
+            // Dispatch a custom event with the slot data
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('fetch_slots_completed', { 
+                detail: {
+                  success: true,
+                  date: data?.search_criteria?.date,
+                  available_slots: availableSlots,
+                  total_available: availableSlots.length,
+                  consultation_type: consultationType,
+                  campus: campusId
+                }
+              }));
+            }
+            
             setProcessingFunction(false);
             return {
               success: true,
@@ -273,8 +386,18 @@ export default function Home() {
             const consultationType = args.consultation_type || (slotData?.consultation_type || "Online");
             const campusId = args.campus_id || (slotData?.campus_id || "Indiranagar");
             const specialityId = args.speciality_id || "Physiotherapist";
-            const patientName = args.patient_name;
-            const mobileNumber = args.mobile_number;
+            
+            // Try to get patient name and mobile number from args or localStorage
+            let patientName = args.patient_name;
+            let mobileNumber = args.mobile_number;
+            
+            if (!mobileNumber) {
+              const storedNumber = localStorage.getItem('patient_phone_number');
+              if (storedNumber) {
+                mobileNumber = storedNumber;
+              }
+            }
+            
             const paymentMode = args.payment_mode || "pay now";
             const userId = '1';
             
@@ -361,7 +484,7 @@ export default function Home() {
             setProcessingFunction(false);
             return bookingResponse;
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error('Error handling function call:', error);
           setProcessingFunction(false);
           return {
@@ -385,15 +508,24 @@ export default function Home() {
   if (showSplash) { 
     return <Splash onComplete={() => setShowSplash(false)} />; 
   } 
+  
+  // Prevent flickering by waiting until loaded
+  if (!isLoaded) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        {/* Optional loading indicator */}
+      </div>
+    );
+  }
 
+  // Use the TooltipProvider directly from the primitive
   return ( 
-    <RTVIClientProvider client={voiceClientRef.current}> 
-      <RTVIClientAudio /> 
-      <TooltipProvider> 
+    <TooltipPrimitive.Provider>
+      <RTVIClientProvider client={voiceClientRef.current}> 
+        <RTVIClientAudio /> 
         <SymptomsProvider>
           <BookingProvider>
             <div className="flex flex-col min-h-svh"> 
-              {/* <Header />  */}
               <main className="flex flex-1 flex-col items-center justify-center p-4 sm:px-6 md:px-8"> 
                 <AppProvider> 
                   <App /> 
@@ -402,7 +534,7 @@ export default function Home() {
             </div> 
           </BookingProvider>
         </SymptomsProvider>
-      </TooltipProvider> 
-    </RTVIClientProvider> 
+      </RTVIClientProvider>
+    </TooltipPrimitive.Provider>
   ); 
 }
