@@ -1,103 +1,102 @@
 // components/BookingContext.tsx
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
 
-export interface BookingDetails {
+export interface Booking {
   doctor: string;
   date: string;
   startDateTime: string;
   consultationType: string;
-  leadId: string | number;
-  paymentMode: string;
-  paymentUrl?: string;
-  referenceId?: string;
   patientName: string;
   mobileNumber: string;
+  paymentUrl?: string;
+  paymentMode?: string;
+  leadId?: string;
+  referenceId?: string;
 }
 
 interface BookingContextType {
-  currentBooking: BookingDetails | null;
-  loading: boolean;
-  error: string | null;
-  setCurrentBooking: (booking: BookingDetails) => void;
+  currentBooking: Booking | null;
+  setCurrentBooking: (booking: Booking) => void;
   clearBooking: () => void;
 }
 
 const BookingContext = createContext<BookingContextType | undefined>(undefined);
 
-interface BookingProviderProps {
-  children: ReactNode;
-}
-
-export const BookingProvider: React.FC<BookingProviderProps> = ({ children }) => {
-  const [currentBooking, setCurrentBooking] = useState<BookingDetails | null>(null);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
+export const BookingProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const [currentBooking, setCurrentBookingState] = useState<Booking | null>(null);
 
   // Load any existing booking from localStorage on mount
   useEffect(() => {
-    try {
-      const savedBooking = localStorage.getItem('physiotattva_current_booking');
-      if (savedBooking) {
-        setCurrentBooking(JSON.parse(savedBooking));
+    if (typeof window === 'undefined') return;
+    
+    const savedBooking = localStorage.getItem('physiotattva_current_booking');
+    if (savedBooking) {
+      try {
+        const bookingData = JSON.parse(savedBooking);
+        setCurrentBookingState(bookingData);
+      } catch (err) {
+        console.error('Error parsing saved booking:', err);
       }
-    } catch (error) {
-      console.error('Error loading booking from localStorage:', error);
     }
   }, []);
 
-  // Listen for appointment_booked events
+  // Set current booking - also saves to localStorage
+  const setCurrentBooking = useCallback((booking: Booking) => {
+    setCurrentBookingState(booking);
+    
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('physiotattva_current_booking', JSON.stringify(booking));
+    }
+  }, []);
+
+  // Clear current booking - also removes from localStorage
+  const clearBooking = useCallback(() => {
+    setCurrentBookingState(null);
+    
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('physiotattva_current_booking');
+    }
+  }, []);
+
+  // Listen for custom appointment_booked events
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
     const handleBookingEvent = (event: CustomEvent) => {
-      const bookingData = event.detail;
-      if (bookingData && bookingData.success && bookingData.appointment_details) {
-        const formattedBooking: BookingDetails = {
-          doctor: bookingData.appointment_details.doctor,
-          date: bookingData.appointment_details.date,
-          startDateTime: bookingData.appointment_details.time,
-          consultationType: bookingData.appointment_details.type,
-          leadId: bookingData.appointment_details.id || 'unknown',
-          paymentMode: bookingData.payment_details?.mode || 'unknown',
-          paymentUrl: bookingData.payment_details?.url,
-          referenceId: bookingData.payment_details?.reference,
-          patientName: bookingData.appointment_details.patient,
-          mobileNumber: bookingData.appointment_details.mobile
-        };
-        setCurrentBooking(formattedBooking);
+      if (event.detail && event.detail.success && event.detail.appointment_details) {
+        const details = event.detail.appointment_details;
+        const payment = event.detail.payment_details;
+        
+        setCurrentBooking({
+          doctor: details.doctor,
+          date: details.date,
+          startDateTime: details.time,
+          consultationType: details.type,
+          patientName: details.patient,
+          mobileNumber: details.mobile,
+          paymentUrl: payment?.url,
+          paymentMode: payment?.mode,
+          referenceId: payment?.reference
+        });
       }
     };
-
+    
     window.addEventListener('appointment_booked', handleBookingEvent as EventListener);
+    
     return () => {
       window.removeEventListener('appointment_booked', handleBookingEvent as EventListener);
     };
-  }, []);
-
-  const clearBooking = () => {
-    setCurrentBooking(null);
-    localStorage.removeItem('physiotattva_current_booking');
-  };
-
-  const handleSetBooking = (booking: BookingDetails) => {
-    setCurrentBooking(booking);
-    localStorage.setItem('physiotattva_current_booking', JSON.stringify(booking));
-  };
+  }, [setCurrentBooking]);
 
   return (
-    <BookingContext.Provider value={{ 
-      currentBooking, 
-      loading, 
-      error, 
-      setCurrentBooking: handleSetBooking,
-      clearBooking
-    }}>
+    <BookingContext.Provider value={{ currentBooking, setCurrentBooking, clearBooking }}>
       {children}
     </BookingContext.Provider>
   );
 };
 
-// Custom hook for using the booking context
 export const useBooking = () => {
   const context = useContext(BookingContext);
   if (context === undefined) {
