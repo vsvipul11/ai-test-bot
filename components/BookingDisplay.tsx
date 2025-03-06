@@ -2,10 +2,9 @@
 "use client";
 
 import { useEffect, useState } from 'react';
-import { Calendar, Clock, User, MapPin, AlertCircle, CreditCard, ExternalLink } from 'lucide-react';
+import { Calendar, Clock, User, MapPin, CreditCard, ExternalLink, X } from 'lucide-react';
 import { useBooking } from './BookingContext';
 import { Button } from './ui/button';
-import React from 'react';
 
 const BookingDisplay = () => {
   const { currentBooking, clearBooking } = useBooking();
@@ -23,7 +22,7 @@ const BookingDisplay = () => {
   }
 
   // Format date nicely if it's in ISO format
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString) => {
     try {
       if (dateString.includes('T') || dateString.includes('-')) {
         const date = new Date(dateString);
@@ -38,6 +37,14 @@ const BookingDisplay = () => {
     } catch (e) {
       return dateString;
     }
+  };
+
+  const handleClose = () => {
+    setVisible(false);
+    // Wait for animation to finish before actually clearing the booking data
+    setTimeout(() => {
+      clearBooking();
+    }, 300);
   };
 
   return (
@@ -56,9 +63,9 @@ const BookingDisplay = () => {
           variant="ghost" 
           size="sm" 
           className="text-green-700 hover:bg-green-100 -mt-1 -mr-1"
-          onClick={() => setVisible(false)}
+          onClick={handleClose}
         >
-          ✕
+          <X className="h-4 w-4" />
         </Button>
       </div>
 
