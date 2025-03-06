@@ -1,7 +1,7 @@
 // components/SymptomsContext.tsx
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 
 export interface Symptom {
   symptom: string;
@@ -10,163 +10,114 @@ export interface Symptom {
   location?: string;
   triggers?: string;
   timestamp: string;
-  sessionId: string;
 }
 
 interface SymptomsContextType {
   symptoms: Symptom[];
-  addSymptom: (symptom: Omit<Symptom, 'timestamp' | 'sessionId'>) => Promise<void>;
   loading: boolean;
   error: string | null;
-  sessionId: string | null;
-  refreshSymptoms: () => Promise<void>;
+  updateSymptoms: (newSymptoms: Symptom[]) => void;
+  refreshSymptoms: () => void;
 }
 
 const SymptomsContext = createContext<SymptomsContextType | undefined>(undefined);
 
-interface SymptomsProviderProps {
-  children: ReactNode;
-}
-
-export const SymptomsProvider: React.FC<SymptomsProviderProps> = ({ children }) => {
+export const SymptomsProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [symptoms, setSymptoms] = useState<Symptom[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [lastFetch, setLastFetch] = useState<number>(0);
 
-  // Initialize or retrieve session ID
-  useEffect(() => {
-    // Check if there's an existing session ID in localStorage
-    const savedSessionId = localStorage.getItem('physiotattva_session_id');
-    if (savedSessionId) {
-      setSessionId(savedSessionId);
-      // Fetch existing symptoms for this session only once at initialization
-      fetchSymptoms(savedSessionId);
-    } else {
-      // We'll create a session ID when the first symptom is added
-      const newSessionId = Math.random().toString(36).substring(2, 15);
-      setSessionId(newSessionId);
-      localStorage.setItem('physiotattva_session_id', newSessionId);
-    }
-  }, []);
-
-  // Throttled fetch to avoid too many requests
-  const fetchSymptoms = async (sid: string) => {
-    // Avoid fetching too frequently
-    const now = Date.now();
-    if (now - lastFetch < 2000) { // Only fetch if more than 2 seconds have passed
-      return;
-    }
+  // Function to fetch symptoms from API
+  const refreshSymptoms = useCallback(async () => {
+    if (typeof window === 'undefined') return;
     
-    setLastFetch(now);
+    setLoading(true);
+    setError(null);
     
     try {
-      setLoading(true);
-      setError(null); // Clear previous errors
+      // Get session ID from local storage
+      const sessionId = localStorage.getItem('physiotattva_session_id');
       
-      const response = await fetch(`/api/symptoms?sessionId=${sid}`);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      if (!sessionId) {
+        setSymptoms([]);
+        setLoading(false);
+        return;
       }
       
-      const data = await response.json();
-      
-      if (data.symptoms) {
-        setSymptoms(data.symptoms);
-      }
-    } catch (err) {
-      console.error('Error fetching symptoms:', err);
-      // Don't set error on the UI to avoid alarming users with many error messages
-      // setError('Error connecting to the server');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const refreshSymptoms = async () => {
-    if (sessionId) {
-      await fetchSymptoms(sessionId);
-    }
-  };
-
-  const addSymptom = async (symptomData: Omit<Symptom, 'timestamp' | 'sessionId'>) => {
-    try {
-      setLoading(true);
-      
-      const response = await fetch('/api/symptoms', {
-        method: 'POST',
+      const response = await fetch(`/api/symptoms?sessionId=${sessionId}`, {
+        method: 'GET',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          ...symptomData,
-          sessionId: sessionId,
-        }),
       });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch symptoms: ${response.status}`);
+      }
       
       const data = await response.json();
       
-      if (response.ok) {
-        // If this is the first symptom, save the session ID
-        if (!sessionId && data.sessionId) {
-          setSessionId(data.sessionId);
-          localStorage.setItem('physiotattva_session_id', data.sessionId);
-        }
-        
-        // Add the new symptom to the list directly without refreshing
-        if (data.symptomRecord) {
-          setSymptoms(prev => [...prev, data.symptomRecord]);
-        }
+      if (data.success && Array.isArray(data.symptoms)) {
+        setSymptoms(data.symptoms);
       } else {
-        setError(data.error || 'Failed to record symptom');
+        setSymptoms([]);
       }
     } catch (err) {
-      setError('Error connecting to the server');
-      console.error('Error adding symptom:', err);
+      console.error("Error fetching symptoms:", err);
+     setError((err as Error).message || 'Failed to fetch symptoms');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  // Store recorded symptoms in localStorage as a backup
-  useEffect(() => {
-    if (symptoms.length > 0 && sessionId) {
-      localStorage.setItem(`symptoms_${sessionId}`, JSON.stringify(symptoms));
+  // Function to update symptoms - used for bulk updates after assessment completes
+  const updateSymptoms = useCallback(async (newSymptoms: Symptom[]) => {
+    if (newSymptoms.length === 0) return;
+    
+    try {
+      // Get session ID from local storage
+      const sessionId = localStorage.getItem('physiotattva_session_id');
+      
+      if (!sessionId) return;
+      
+      // Save symptoms to backend in bulk
+      const promises = newSymptoms.map(symptom => 
+        fetch('/api/symptoms', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            ...symptom,
+            sessionId
+          }),
+        })
+      );
+      
+      await Promise.all(promises);
+      
+      // Update local state with new symptoms
+      setSymptoms(prevSymptoms => {
+        const existingSymptomMap = new Map();
+        prevSymptoms.forEach(s => existingSymptomMap.set(s.symptom, true));
+        
+        // Filter out duplicates
+        const uniqueNewSymptoms = newSymptoms.filter(s => !existingSymptomMap.has(s.symptom));
+        
+        return [...prevSymptoms, ...uniqueNewSymptoms];
+      });
+    } catch (err) {
+      console.error("Error updating symptoms:", err);
     }
-  }, [symptoms, sessionId]);
-
-  // Load from localStorage on initialization if API fails
-  useEffect(() => {
-    if (sessionId && symptoms.length === 0) {
-      const savedSymptoms = localStorage.getItem(`symptoms_${sessionId}`);
-      if (savedSymptoms) {
-        try {
-          const parsedSymptoms = JSON.parse(savedSymptoms);
-          setSymptoms(parsedSymptoms);
-        } catch (e) {
-          console.error('Error parsing saved symptoms', e);
-        }
-      }
-    }
-  }, [sessionId, symptoms.length]);
+  }, []);
 
   return (
-    <SymptomsContext.Provider value={{ 
-      symptoms, 
-      addSymptom, 
-      loading, 
-      error, 
-      sessionId,
-      refreshSymptoms
-    }}>
+    <SymptomsContext.Provider value={{ symptoms, loading, error, updateSymptoms, refreshSymptoms }}>
       {children}
     </SymptomsContext.Provider>
   );
 };
 
-// Custom hook for using the symptoms context
 export const useSymptoms = () => {
   const context = useContext(SymptomsContext);
   if (context === undefined) {
