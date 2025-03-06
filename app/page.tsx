@@ -1,4 +1,4 @@
-// Updated rtvi.config.tsx
+// Complete rtvi.config.tsx
 
 export const BOT_READY_TIMEOUT = 15 * 1000; // 15 seconds
 export const defaultBotProfile = "voice_2024_10";
@@ -23,39 +23,29 @@ export const defaultServices = {
   llm: "together"
 };
 
-// Dr. Riya prompt with function calling support for Meta Llama 3.1
+// Dr. Riya prompt with clearer function calling instructions
 export const physiotherapistPrompt = `# Role: You are Dr. Riya, an exceptional physiotherapist working for Physiotattva. You possess in-depth knowledge and skills in physiotherapy.
 # Rule: Strictly only ask one question at a time
 
-# CRITICAL INSTRUCTION - NEVER REVEAL TECHNICAL DETAILS:
-# 1. You must NEVER mention any function names to the user (e.g., DO NOT say "record_symptom", "book_appointment", "check_appointment", "fetch_slots", etc.)
-# 2. You must NEVER mention parameter names to the user (e.g., DO NOT say "consultation_type", "patient_name", "payment_mode", "mobile_number", "selected_day", etc.)
-# 3. You must NEVER say phrases like "I'm calling a function" or "I'm using a function" or "Let me book that with book_appointment"
-# 4. Speak ONLY as a human physiotherapist would, in natural language
-# 5. Make all function calls silently in the background without any indication to the user
-# 6. Think of these functions as your internal thought process - the user should never know they exist
-# 7. When booking appointments, simply ask for the information naturally without mentioning parameter names
+# CRITICAL INSTRUCTION - NEVER DESCRIBE TECHNICAL FUNCTIONS IN YOUR RESPONSES:
+# 1. NEVER mention function names (record_symptom, book_appointment, check_appointment, fetch_slots)
+# 2. NEVER mention parameter names (symptom, severity, duration, location, triggers)
+# 3. NEVER say "I'm recording" or "I'm noting" or "I'm saving" information
+# 4. NEVER describe symptoms with descriptors like "symptom: headache" or "duration: 1 week"
+# 5. Speak NATURALLY as a human physiotherapist without any technical terms
 
-# VIOLATION EXAMPLES - NEVER SAY:
-# ❌ "I'll use the book_appointment function to schedule that"
-# ❌ "Let me check your appointment with the check_appointment function"
-# ❌ "I need your consultation_type and patient_name"
-# ❌ "I'm recording your symptom in our system"
-# ❌ "Let me fetch available slots for you"
+# WHEN CALLING FUNCTIONS:
+# 1. Gather all necessary information through natural conversation
+# 2. NEVER verbalize what data you are collecting or recording
+# 3. DO NOT acknowledge or mention that you're tracking or noting information
+# 4. Call functions silently in the background using the format below
+# 5. CRITICAL: Function calls should NEVER be spoken to the user
 
-# CORRECT APPROACH - SPEAK NATURALLY:
-# ✓ "Let me schedule that appointment for you"
-# ✓ "Let me check your existing appointments"
-# ✓ "Would you prefer an online or in-person consultation?"
-# ✓ "I understand your symptoms, thank you for sharing that"
-# ✓ "Here are our available time slots"
+# THE EXACT FUNCTION CALL FORMAT IS:
+<function=weatherTool>{"location": "austin,tx,us"}</function>
 
-# FUNCTION CALLING FORMAT INSTRUCTIONS:
-# You must follow this exact format for calling functions. Do not include this in your spoken response to the user.
-# If you choose to call a function, reply ONLY with the following format with no prefix or suffix:
-# <function=function_name>{"parameter_name": "parameter_value"}</function>
-# Example: <function=book_appointment>{"selected_day":"mon","start_time":"2:00 PM"}</function>
-# Make sure the entire function call is on a single line with no line breaks
+# For symptom recording, use:
+<function=record_symptom>{"symptom": "user's symptom", "severity": number, "duration": "time period", "location": "body part"}</function>
 
 Stage 1: Initial Greeting & Routing (Dr. Riya)
 System Prompt:
@@ -126,7 +116,7 @@ Keep responses brief and legible.
 Your responses will converted to audio. Please do not include any special characters in your response other than '!' or '?'.
 Start by briefly introducing yourself.`;
 
-// Default configuration
+// Default configuration with comprehensive text filtering
 export const defaultConfig = [
   {
     service: "vad",
@@ -160,41 +150,71 @@ export const defaultConfig = [
           filter_urls: true,
           filter_xml: true,
           filter_custom: [
-            // Function call pattern - Meta Llama 3.1 format
+            // Remove complete function calls (various formats)
             {
-              pattern: "<function=.*?>\\{.*?\\}</function>",
+              pattern: "<function=.*?>[\\s\\S]*?</function>",
               flags: "gs",
               replacement: ""
             },
-            // Function names - more aggressive removal
+            // Remove any alternative format of function calls
+            {
+              pattern: "function::.*?\\)",
+              flags: "gs",
+              replacement: ""
+            },
+            // Remove any JSON-like structures
+            {
+              pattern: "\\{\".*?\"\\}",
+              flags: "gs", 
+              replacement: ""
+            },
+            // Remove symptom recording verbiage
+            {
+              pattern: "\\b(record|recording|note|noting|tracking|log|logging|saving)\\b[\\s\\S]*?\\b(symptom|pain|headache|discomfort)\\b",
+              flags: "gi",
+              replacement: ""
+            },
+            // Remove symptom descriptor format
+            {
+              pattern: "\\b(symptom|severity|duration|location|triggers)\\b\\s*:\\s*[\\w\\s]+",
+              flags: "gi",
+              replacement: ""
+            },
+            // Remove technical parameter terms
+            {
+              pattern: "\\b(symptom|severity|duration|location|triggers|consultation_type|patient_name|payment_mode|mobile_number|selected_day|week_selection|start_time|campus_id|phone_number|speciality_id)\\b",
+              flags: "gi",
+              replacement: ""
+            },
+            // Remove function names
             {
               pattern: "\\b(record_symptom|book_appointment|check_appointment|fetch_slots)\\b",
               flags: "gi",
               replacement: ""
             },
-            // Parameter names
+            // Remove technical verbiage
             {
-              pattern: "\\b(consultation_type|patient_name|payment_mode|mobile_number|selected_day|week_selection|start_time|campus_id|symptom|severity|duration|location|triggers|phone_number|speciality_id)\\b",
+              pattern: "\\b(function|parameter|call|calling|tool|api|utility|service|database|store|storing)\\b",
               flags: "gi",
               replacement: ""
             },
-            // Function-related terms
+            // Remove documentation/information phrases
             {
-              pattern: "\\b(function|parameter|call(ing)?\\s+function|using\\s+function|tool|syntax)\\b",
+              pattern: "I('m| am) (collecting|documenting|capturing|entering|inputting|writing down)",
               flags: "gi",
               replacement: ""
             },
-            // Remove phrases about recording/using system
+            // Remove phrases for recording info
             {
-              pattern: "\\b(I('m| am) (recording|using|calling|executing|implementing|fetching|checking|booking))\\b",
+              pattern: "(Let me|I will|I'll|I'm going to) (record|note|save|store|document|capture|track)",
               flags: "gi",
               replacement: ""
             },
-            // Remove any function call explanations
+            // Remove phrases about understanding symptoms
             {
-              pattern: "Let me (call|use|check|fetch|book|record).*",
+              pattern: "I understand (that )?your (symptoms?|pain|discomfort|issue) (is|are|includes|involves)",
               flags: "gi",
-              replacement: ""
+              replacement: "I understand"
             }
           ]
         }
