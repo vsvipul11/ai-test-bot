@@ -20,6 +20,53 @@ import {
   endpoints 
 } from "@/rtvi.config"; 
 
+// Function to clean text before TTS processing - EMERGENCY SOLUTION
+function cleanTextForTTS(text) {
+  if (!text) return text;
+  
+  // Log original text for debugging
+  console.log("Original text before cleaning:", text);
+  
+  // Step 1: Remove any function calls
+  let cleanedText = text.replace(/<function=.*?<\/function>/gs, "");
+  
+  // Step 2: List of words to filter out completely
+  const filterWords = [
+    "record_symptom", "book_appointment", "check_appointment", "fetch_slots",
+    "symptom", "severity", "duration", "location", "triggers",
+    "patient_name", "consultation_type", "mobile_number", "selected_day",
+    "campus_id", "start_time", "payment_mode", "week_selection",
+    "function", "parameter", "tool", "api", "database"
+  ];
+  
+  // Step 3: Remove any sentences containing these words
+  // Create a regex that matches sentences containing any of these words
+  const wordsPattern = new RegExp(`[^.!?]*\\b(${filterWords.join("|")})\\b[^.!?]*[.!?]`, "gis");
+  cleanedText = cleanedText.replace(wordsPattern, "");
+  
+  // Step 4: Remove any pattern that looks like parameter:value
+  cleanedText = cleanedText.replace(/\w+\s*:\s*\w+/gi, "");
+  
+  // Step 5: Remove phrases about recording or noting
+  const actionVerbs = [
+    "record", "recording", "note", "noting", "save", "saving", 
+    "track", "tracking", "document", "documenting", "log", "logging"
+  ];
+  const verbPattern = new RegExp(`[^.!?]*(${actionVerbs.join("|")})\\b[^.!?]*[.!?]`, "gis");
+  cleanedText = cleanedText.replace(verbPattern, "");
+  
+  // Step 6: Remove any JSON-like structures
+  cleanedText = cleanedText.replace(/\{.*?\}/gs, "");
+  
+  // Step 7: Clean up any double spaces or empty lines
+  cleanedText = cleanedText.replace(/\s+/g, " ").trim();
+  
+  // Log cleaned text for debugging
+  console.log("Cleaned text:", cleanedText);
+  
+  return cleanedText;
+}
+
 export default function Home() { 
   const [showSplash, setShowSplash] = useState(true); 
   const voiceClientRef = useRef(null); 
@@ -45,6 +92,7 @@ export default function Home() {
     } 
     
     try { 
+      // Create RTVIClient with the same configuration
       const voiceClient = new RTVIClient({ 
         transport: new DailyTransport(), 
         params: { 
@@ -62,6 +110,24 @@ export default function Home() {
         enableCam: false, 
       }); 
       
+      // Add custom event listener for text cleanup - THIS IS THE KEY ADDITION
+      // This will intercept any text before it's sent to TTS and clean it
+      if (voiceClient.on) {
+        console.log("Adding TTS text cleaning middleware");
+        
+        // This intercepts the text before it goes to TTS
+        voiceClient.on("beforeMessageToSpeech", (event) => {
+          console.log("Intercepting message for TTS cleaning:", event);
+          
+          if (event && event.text) {
+            // Clean the text to remove any function references
+            event.text = cleanTextForTTS(event.text);
+          }
+          
+          return event;
+        });
+      }
+      
       voiceClient.on("botReady", () => { 
         console.log("Bot is ready!"); 
       }); 
@@ -74,7 +140,16 @@ export default function Home() {
       const llmHelper = voiceClient.registerHelper(
         "llm",
         new LLMHelper({
-          callbacks: {}
+          callbacks: {
+            // Add message preprocessing here too for extra safety
+            onMessage: (message) => {
+              if (message && message.content) {
+                // Clean any function calls from the message content
+                message.content = cleanTextForTTS(message.content);
+              }
+              return message;
+            }
+          }
         })
       ) as LLMHelper;
       
@@ -342,7 +417,6 @@ export default function Home() {
             const userId = '1'; // Default user ID
             
             // Validate required fields
-       // Validate required fields
             if (!selectedDay || !startTime || !consultationType || !patientName || !mobileNumber) {
               throw new Error("Missing required booking information");
             }
@@ -453,7 +527,7 @@ export default function Home() {
       });
     
       voiceClientRef.current = voiceClient;
-      console.log("Voice client initialized with Meta Llama function calling");
+      console.log("Voice client initialized with Meta Llama function calling and text cleaning middleware");
     } catch (error) { 
       console.error("Error initializing voice client:", error); 
     } 
