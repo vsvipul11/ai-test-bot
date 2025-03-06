@@ -23,7 +23,7 @@ export const defaultServices = {
   llm: "together"
 };
 
-// Dr. Riya prompt with function calling support for Meta Llama
+// Dr. Riya prompt with function calling support - UPDATED with clear formatting
 export const physiotherapistPrompt = `# Role: You are Dr. Riya, an exceptional physiotherapist working for Physiotattva. You possess in-depth knowledge and skills in physiotherapy.
 # Rule: Strictly only ask one question at a time
 
@@ -50,7 +50,15 @@ export const physiotherapistPrompt = `# Role: You are Dr. Riya, an exceptional p
 # ✓ "I understand your symptoms, thank you for sharing that"
 # ✓ "Here are our available time slots"
 
-# You have access to several internal functions to help manage patient information - use them silently without mentioning them to patients.
+# YOU MUST USE THIS EXACT FUNCTION CALL FORMAT:
+# When calling a function, always wrap it inside <function=name>{parameters}</function> tags
+# Example: <function=book_appointment>{"selected_day":"mon","start_time":"2:00 PM"}</function>
+# Never include the function call in your spoken response to the user
+
+# FUNCTION CALL WORKFLOW:
+# 1. Collect the necessary information from the user through natural conversation
+# 2. When ready to call a function, add the function call at the END of your message
+# 3. The function call will be invisible to the user due to text filtering
 
 Stage 1: Initial Greeting & Routing (Dr. Riya)
 System Prompt:
@@ -121,7 +129,7 @@ Keep responses brief and legible.
 Your responses will converted to audio. Please do not include any special characters in your response other than '!' or '?'.
 Start by briefly introducing yourself.`;
 
-// Default configuration
+// Default configuration - UPDATED with comprehensive text filter patterns
 export const defaultConfig = [
   {
     service: "vad",
@@ -155,23 +163,45 @@ export const defaultConfig = [
           filter_urls: true,
           filter_xml: true,
           filter_custom: [
+            // Function call patterns
             {
               pattern: "<function=.*?</function>",
-              flags: "g",
+              flags: "gs",
               replacement: ""
             },
+            // Function parameter patterns
             {
-              pattern: "book_appointment|record_symptom|check_appointment|fetch_slots",
-              flags: "g",
+              pattern: "\\{\".*?\"\\}",
+              flags: "gs", 
               replacement: ""
             },
+            // Function names
             {
-              pattern: "consultation_type|patient_name|payment_mode|mobile_number|selected_day|week_selection|start_time|campus_id",
-              flags: "g",
+              pattern: "\\b(record_symptom|book_appointment|check_appointment|fetch_slots)\\b",
+              flags: "gi",
               replacement: ""
             },
+            // Parameter names
             {
-              pattern: "\\bfunction\\b|\\bparameter\\b|\\bcall(ing)?\\s+function\\b|\\busing\\s+function\\b",
+              pattern: "\\b(consultation_type|patient_name|payment_mode|mobile_number|selected_day|week_selection|start_time|campus_id|symptom|severity|duration|location|triggers|phone_number|speciality_id)\\b",
+              flags: "gi",
+              replacement: ""
+            },
+            // Function-related terms
+            {
+              pattern: "\\b(function|parameter|call(ing)?\\s+function|using\\s+function|tool)\\b",
+              flags: "gi",
+              replacement: ""
+            },
+            // Remove JSON strings
+            {
+              pattern: "JSON\\.stringify\\(.*?\\)",
+              flags: "gs",
+              replacement: ""
+            },
+            // Remove any phrase about recording/using system
+            {
+              pattern: "\\b(I('m| am) (recording|using|calling|executing|implementing|fetching|checking|booking|applying))\\b",
               flags: "gi",
               replacement: ""
             }
