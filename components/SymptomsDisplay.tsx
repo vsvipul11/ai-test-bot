@@ -2,16 +2,17 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useSymptoms, Symptom } from './SymptomsContext';
-import { AlertCircle, Activity, Clock, MapPin, ArrowRight } from 'lucide-react';
+import { useSymptoms } from './SymptomsContext';
+import { AlertCircle, Activity, Clock, MapPin, ArrowRight, RefreshCw } from 'lucide-react';
+import { Button } from './ui/button';
 
 const SymptomsDisplay = () => {
   const { symptoms, loading, error, refreshSymptoms } = useSymptoms();
   const [isExpanded, setIsExpanded] = useState(false);
 
-  useEffect(() => {
-    refreshSymptoms();
-  }, [refreshSymptoms]);
+  // Unlike the original component, we're not calling refreshSymptoms on mount
+  // as that's now handled in the Session component and symptoms are only
+  // updated when the assessment is complete
 
   if (loading) {
     return (
@@ -32,12 +33,15 @@ const SymptomsDisplay = () => {
         <div>
           <p className="font-medium">Error loading symptoms</p>
           <p className="text-sm text-red-400">{error}</p>
-          <button 
+          <Button 
             onClick={refreshSymptoms}
-            className="mt-2 text-sm px-2 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded"
+            variant="outline"
+            size="sm"
+            className="mt-2 text-red-600 border-red-200 hover:bg-red-50 flex items-center gap-1"
           >
+            <RefreshCw className="h-3 w-3" />
             Try again
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -50,18 +54,18 @@ const SymptomsDisplay = () => {
           <Activity className="h-6 w-6 text-blue-600" />
         </div>
         <p className="text-gray-600 mb-2">No symptoms recorded yet.</p>
-        <p className="text-sm text-gray-500">Symptoms mentioned during your consultation will appear here.</p>
+        <p className="text-sm text-gray-500">Complete a symptom assessment with Dr. Riya to record symptoms.</p>
       </div>
     );
   }
 
-  const formatTimestamp = (timestamp: string) => {
+  const formatTimestamp = (timestamp) => {
     const date = new Date(timestamp);
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   // Function to determine severity color
-  const getSeverityColor = (severity?: number) => {
+  const getSeverityColor = (severity) => {
     if (!severity) return 'bg-gray-100 text-gray-700';
     if (severity <= 3) return 'bg-green-100 text-green-800';
     if (severity <= 6) return 'bg-yellow-100 text-yellow-800';
@@ -69,7 +73,7 @@ const SymptomsDisplay = () => {
   };
 
   // Function to determine severity label
-  const getSeverityLabel = (severity?: number) => {
+  const getSeverityLabel = (severity) => {
     if (!severity) return 'Not specified';
     if (severity <= 3) return 'Mild';
     if (severity <= 6) return 'Moderate';
@@ -78,6 +82,18 @@ const SymptomsDisplay = () => {
 
   return (
     <div className="w-full">
+      <div className="flex justify-between items-center mb-3">
+        <span className="text-sm text-gray-500">{symptoms.length} symptoms recorded</span>
+        <Button 
+          onClick={refreshSymptoms}
+          variant="ghost"
+          size="sm"
+          className="text-blue-600 hover:bg-blue-50 p-1 h-8 w-8"
+        >
+          <RefreshCw className="h-4 w-4" />
+        </Button>
+      </div>
+      
       <ul className="divide-y divide-gray-100">
         {symptoms.slice(0, isExpanded ? undefined : 3).map((symptom, index) => (
           <li key={index} className="p-4 hover:bg-gray-50 transition-colors">
