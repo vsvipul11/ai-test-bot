@@ -1,4 +1,4 @@
-// Updated rtvi.config.tsx
+// Final Fixed rtvi.config.tsx
 
 export const BOT_READY_TIMEOUT = 15 * 1000; // 15 seconds
 export const defaultBotProfile = "voice_2024_10";
@@ -23,7 +23,142 @@ export const defaultServices = {
   llm: "together"
 };
 
-// Dr. Riya prompt with function calling support - UPDATED with clear formatting
+// Define tools for use in prompt - USING EXACT FORMAT FROM WEATHER EXAMPLE
+const recordSymptomTool = {
+  name: "record_symptom",
+  description: "Record a symptom reported by the patient",
+  parameters: {
+    type: "object",
+    properties: {
+      symptom: {
+        type: "string",
+        description: "The symptom reported by the patient"
+      },
+      severity: {
+        type: "integer",
+        description: "Severity of the symptom on a scale of 1-10 (if provided)",
+        minimum: 1,
+        maximum: 10
+      },
+      duration: {
+        type: "string",
+        description: "How long the patient has been experiencing this symptom"
+      },
+      location: {
+        type: "string",
+        description: "The body part or area where the symptom is experienced"
+      },
+      triggers: {
+        type: "string",
+        description: "Activities or situations that trigger or worsen the symptom"
+      }
+    },
+    required: ["symptom"]
+  }
+};
+
+const checkAppointmentTool = {
+  name: "check_appointment",
+  description: "Check upcoming appointments for a patient",
+  parameters: {
+    type: "object",
+    properties: {
+      phone_number: {
+        type: "string",
+        description: "The patient's phone number to look up appointments"
+      }
+    },
+    required: ["phone_number"]
+  }
+};
+
+const fetchSlotsTool = {
+  name: "fetch_slots",
+  description: "Fetch available appointment slots based on day and location preferences",
+  parameters: {
+    type: "object",
+    properties: {
+      week_selection: {
+        type: "string",
+        description: "Which week to check",
+        enum: ["this week", "next week"]
+      },
+      selected_day: {
+        type: "string",
+        description: "Day of the week",
+        enum: ["mon", "tue", "wed", "thu", "fri", "sat"]
+      },
+      consultation_type: {
+        type: "string",
+        description: "Type of consultation",
+        enum: ["Online", "In-Person"]
+      },
+      campus_id: {
+        type: "string",
+        description: "Campus location (required for In-Person consultations)",
+        enum: ["Indiranagar", "Koramangala", "Whitefield", "Hyderabad"]
+      }
+    },
+    required: ["selected_day", "consultation_type"]
+  }
+};
+
+const bookAppointmentTool = {
+  name: "book_appointment",
+  description: "Book an appointment for a patient",
+  parameters: {
+    type: "object",
+    properties: {
+      week_selection: {
+        type: "string",
+        description: "Which week to book",
+        enum: ["this week", "next week"]
+      },
+      selected_day: {
+        type: "string",
+        description: "Day of the week",
+        enum: ["mon", "tue", "wed", "thu", "fri", "sat"]
+      },
+      start_time: {
+        type: "string",
+        description: "Start time of the appointment",
+        pattern: "^[0-9]{1,2}:[0-9]{2} (AM|PM)$"
+      },
+      consultation_type: {
+        type: "string",
+        description: "Type of consultation",
+        enum: ["Online", "In-Person"]
+      },
+      campus_id: {
+        type: "string",
+        description: "Campus location (required for In-Person consultations)",
+        enum: ["Indiranagar", "Koramangala", "Whitefield", "Hyderabad"]
+      },
+      speciality_id: {
+        type: "string",
+        description: "Speciality required",
+        default: "Physiotherapist"
+      },
+      patient_name: {
+        type: "string",
+        description: "Name of the patient"
+      },
+      mobile_number: {
+        type: "string",
+        description: "Mobile number of the patient"
+      },
+      payment_mode: {
+        type: "string",
+        description: "Payment mode",
+        enum: ["pay now", "pay later"],
+        default: "pay now"
+      }
+    },
+    required: ["selected_day", "start_time", "consultation_type", "patient_name", "mobile_number"]
+  }
+};
+
+// Dr. Riya prompt with EXACT function calling format from weather example
 export const physiotherapistPrompt = `# Role: You are Dr. Riya, an exceptional physiotherapist working for Physiotattva. You possess in-depth knowledge and skills in physiotherapy.
 # Rule: Strictly only ask one question at a time
 
@@ -35,6 +170,34 @@ export const physiotherapistPrompt = `# Role: You are Dr. Riya, an exceptional p
 # 5. Make all function calls silently in the background without any indication to the user
 # 6. Think of these functions as your internal thought process - the user should never know they exist
 # 7. When booking appointments, simply ask for the information naturally without mentioning parameter names
+# 8. NEVER describe symptoms with formats like "symptom: headache" or "location: forehead" - just speak naturally
+
+# FUNCTION CALLING INSTRUCTIONS:
+
+You have access to the following functions:
+
+Use the function 'record_symptom' to 'Record a symptom reported by the patient':
+${JSON.stringify(recordSymptomTool)}
+
+Use the function 'check_appointment' to 'Check upcoming appointments for a patient':
+${JSON.stringify(checkAppointmentTool)}
+
+Use the function 'fetch_slots' to 'Fetch available appointment slots based on day and location preferences':
+${JSON.stringify(fetchSlotsTool)}
+
+Use the function 'book_appointment' to 'Book an appointment for a patient':
+${JSON.stringify(bookAppointmentTool)}
+
+If you choose to call a function ONLY reply in the following format with no prefix or suffix:
+
+<function=example_function_name>{"example_name": "example_value"}</function>
+
+Reminder:
+- Function calls MUST follow the specified format, start with <function= and end with </function>
+- Required parameters MUST be specified
+- Only call one function at a time
+- Put the entire function call reply on one line
+- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls
 
 # VIOLATION EXAMPLES - NEVER SAY:
 # ❌ "I'll use the book_appointment function to schedule that"
@@ -42,6 +205,7 @@ export const physiotherapistPrompt = `# Role: You are Dr. Riya, an exceptional p
 # ❌ "I need your consultation_type and patient_name"
 # ❌ "I'm recording your symptom in our system"
 # ❌ "Let me fetch available slots for you"
+# ❌ "Symptom: headache, severity: 8, location: forehead"
 
 # CORRECT APPROACH - SPEAK NATURALLY:
 # ✓ "Let me schedule that appointment for you"
@@ -49,16 +213,6 @@ export const physiotherapistPrompt = `# Role: You are Dr. Riya, an exceptional p
 # ✓ "Would you prefer an online or in-person consultation?"
 # ✓ "I understand your symptoms, thank you for sharing that"
 # ✓ "Here are our available time slots"
-
-# YOU MUST USE THIS EXACT FUNCTION CALL FORMAT:
-# When calling a function, always wrap it inside <function=name>{parameters}</function> tags
-# Example: <function=book_appointment>{"selected_day":"mon","start_time":"2:00 PM"}</function>
-# Never include the function call in your spoken response to the user
-
-# FUNCTION CALL WORKFLOW:
-# 1. Collect the necessary information from the user through natural conversation
-# 2. When ready to call a function, add the function call at the END of your message
-# 3. The function call will be invisible to the user due to text filtering
 
 Stage 1: Initial Greeting & Routing (Dr. Riya)
 System Prompt:
@@ -129,7 +283,7 @@ Keep responses brief and legible.
 Your responses will converted to audio. Please do not include any special characters in your response other than '!' or '?'.
 Start by briefly introducing yourself.`;
 
-// Default configuration - UPDATED with comprehensive text filter patterns
+// Default configuration with EXTREMELY aggressive text filtering
 export const defaultConfig = [
   {
     service: "vad",
@@ -163,47 +317,65 @@ export const defaultConfig = [
           filter_urls: true,
           filter_xml: true,
           filter_custom: [
-            // Function call patterns
+            // EXTREME FILTERING: Remove anything with function name
             {
-              pattern: "<function=.*?</function>",
+              pattern: ".*?(record_symptom|book_appointment|check_appointment|fetch_slots).*",
+              flags: "gis",
+              replacement: ""
+            },
+            // Remove any parameter names
+            {
+              pattern: ".*?(symptom|severity|duration|location|triggers|patient_name|consultation_type|mobile_number|selected_day|phone_number|campus_id|start_time|payment_mode|week_selection).*",
+              flags: "gis",
+              replacement: ""
+            },
+            // Remove any pattern that looks like "parameter: value"
+            {
+              pattern: "\\w+\\s*:\\s*\\w+",
+              flags: "gi",
+              replacement: ""
+            },
+            // Remove function or parameter descriptions
+            {
+              pattern: "\\b(using|with|call|calling|use|using|execute|executing|record|recording|save|saving|note|noting|log|logging|track|tracking)\\s+\\w+\\s*(function|parameter|tool|method|service|data|information)",
+              flags: "gi",
+              replacement: ""
+            },
+            // Remove complete function calls (XML format)
+            {
+              pattern: "<function=.*?>[\\s\\S]*?</function>",
               flags: "gs",
               replacement: ""
             },
-            // Function parameter patterns
+            // Remove any JSON-like structures
             {
-              pattern: "\\{\".*?\"\\}",
+              pattern: "\\{.*?\\}",
               flags: "gs", 
               replacement: ""
             },
-            // Function names
+            // Remove technical verbiage about functions
             {
-              pattern: "\\b(record_symptom|book_appointment|check_appointment|fetch_slots)\\b",
+              pattern: "\\b(function|parameter|tool|api|database|service|system|interface)\\b",
               flags: "gi",
               replacement: ""
             },
-            // Parameter names
+            // Remove any references to recording symptoms
             {
-              pattern: "\\b(consultation_type|patient_name|payment_mode|mobile_number|selected_day|week_selection|start_time|campus_id|symptom|severity|duration|location|triggers|phone_number|speciality_id)\\b",
+              pattern: "\\b(record|recording|note|noting|saving|store|storing|document|documenting|track|tracking)\\b.*?\\b(symptom|pain|discomfort|issue|information|data)\\b",
               flags: "gi",
               replacement: ""
             },
-            // Function-related terms
+            // Remove any sentences that contain function explanation
             {
-              pattern: "\\b(function|parameter|call(ing)?\\s+function|using\\s+function|tool)\\b",
+              pattern: "(I will|I'll|Let me|I need to|I'm going to|I am going to)\\s+(use|call|work with|make|create|execute).*",
               flags: "gi",
               replacement: ""
             },
-            // Remove JSON strings
+            // Remove any sentences about understanding symptoms with details
             {
-              pattern: "JSON\\.stringify\\(.*?\\)",
-              flags: "gs",
-              replacement: ""
-            },
-            // Remove any phrase about recording/using system
-            {
-              pattern: "\\b(I('m| am) (recording|using|calling|executing|implementing|fetching|checking|booking|applying))\\b",
+              pattern: "I understand (that |your |about )?(your |the )?(symptoms?|pain|discomfort|issue)\\s+(is|are|has|have|includes|involves|with|of|at|in).*",
               flags: "gi",
-              replacement: ""
+              replacement: "I understand"
             }
           ]
         }
