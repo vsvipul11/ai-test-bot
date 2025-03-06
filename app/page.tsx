@@ -1,31 +1,31 @@
-"use client";
+"use client"; 
 
-import { useEffect, useRef, useState } from "react";
-import { TooltipProvider } from "@radix-ui/react-tooltip";
-import { FunctionCallParams, LLMHelper } from "realtime-ai";
-import { DailyVoiceClient } from "realtime-ai-daily";
-import { VoiceClientAudio, VoiceClientProvider } from "realtime-ai-react";
-import App from "@/components/App";
-import { AppProvider } from "@/components/context";
-import Header from "@/components/Header";
+import { DailyTransport } from "@daily-co/realtime-ai-daily"; 
+import { TooltipProvider } from "@radix-ui/react-tooltip"; 
+import { useEffect, useRef, useState } from "react"; 
+import { FunctionCallParams, LLMHelper, RTVIClient } from "realtime-ai"; 
+import { RTVIClientAudio, RTVIClientProvider } from "realtime-ai-react"; 
+import App from "@/components/App"; 
+import { AppProvider } from "@/components/context"; 
+import Header from "@/components/Header"; 
 import Splash from "@/components/Splash";
 import { SymptomsProvider } from "@/components/SymptomsContext";
 import { BookingProvider } from "@/components/BookingContext";
-import {
-  BOT_READY_TIMEOUT,
-  defaultBotProfile,
-  defaultConfig,
-  defaultMaxDuration,
-  defaultServices,
-  endpoints
-} from "@/rtvi.config";
+import { 
+  BOT_READY_TIMEOUT, 
+  defaultBotProfile, 
+  defaultConfig, 
+  defaultMaxDuration, 
+  defaultServices, 
+  endpoints 
+} from "@/rtvi.config"; 
 
-export default function Home() {
-  const [showSplash, setShowSplash] = useState(true);
+export default function Home() { 
+  const [showSplash, setShowSplash] = useState(true); 
   const [processingFunction, setProcessingFunction] = useState(false);
-  const voiceClientRef = useRef(null);
+  const voiceClientRef = useRef(null); 
   const [sessionId, setSessionId] = useState(null);
-
+  
   // Initialize or retrieve session ID on component mount
   useEffect(() => {
     // Check if there's an existing session ID in localStorage
@@ -39,33 +39,53 @@ export default function Home() {
       localStorage.setItem('physiotattva_session_id', newSessionId);
     }
   }, []);
-
-  useEffect(() => {
-    if (!showSplash || voiceClientRef.current || !sessionId) {
-      return;
-    }
-
-    try {
-      const voiceClient = new DailyVoiceClient({
-        baseUrl: process.env.NEXT_PUBLIC_BASE_URL || "/api",
-        services: defaultServices,
-        config: defaultConfig,
-        timeout: BOT_READY_TIMEOUT,
-      });
-
-      // Initialize LLM Helper
-      const llmHelper = new LLMHelper({
-        callbacks: {
-          onLLMFunctionCall: (fn) => {
-            // Set state when a function is being called
-            setProcessingFunction(true);
-            console.log("Function being called:", fn.functionName);
-          },
-        },
-      });
-
-      voiceClient.registerHelper("llm", llmHelper);
-
+  
+  useEffect(() => { 
+    if (!showSplash || voiceClientRef.current || !sessionId) { 
+      return; 
+    } 
+    
+    try { 
+      // Create RTVIClient - using your project's imports
+      const voiceClient = new RTVIClient({ 
+        transport: new DailyTransport(), 
+        params: { 
+          baseUrl: process.env.NEXT_PUBLIC_BASE_URL || "/api", 
+          endpoints: endpoints, 
+          requestData: { 
+            services: defaultServices, 
+            config: defaultConfig, 
+            bot_profile: defaultBotProfile, 
+            max_duration: defaultMaxDuration,
+          }, 
+        }, 
+        timeout: BOT_READY_TIMEOUT, 
+        enableMic: true, 
+        enableCam: false, 
+      }); 
+      
+      voiceClient.on("botReady", () => { 
+        console.log("Bot is ready!"); 
+      }); 
+      
+      voiceClient.on("error", (error) => { 
+        console.error("Voice client error:", error); 
+      }); 
+      
+      // Initialize LLM Helper with function calling for Anthropic
+      const llmHelper = voiceClient.registerHelper(
+        "llm",
+        new LLMHelper({
+          callbacks: {
+            // Add this callback to track when function is being called
+            onLLMFunctionCall: (fn) => {
+              setProcessingFunction(true);
+              console.log("Function being called:", fn.functionName);
+            }
+          }
+        })
+      );
+      
       // Handle function calls
       llmHelper.handleFunctionCall(async (fn: FunctionCallParams) => {
         console.log("Function call received:", fn.functionName, fn.arguments);
@@ -354,35 +374,35 @@ export default function Home() {
         setProcessingFunction(false);
         return null; // Return null for unhandled function calls
       });
-
+    
       voiceClientRef.current = voiceClient;
-      console.log("Voice client initialized successfully");
-    } catch (error) {
-      console.error("Error initializing voice client:", error);
-    }
-  }, [showSplash, sessionId]);
+      console.log("Voice client initialized with function calling");
+    } catch (error) { 
+      console.error("Error initializing voice client:", error); 
+    } 
+  }, [showSplash, sessionId]); 
 
-  if (showSplash) {
-    return <Splash onComplete={() => setShowSplash(false)} />;
-  }
+  if (showSplash) { 
+    return <Splash onComplete={() => setShowSplash(false)} />; 
+  } 
 
-  return (
-    <VoiceClientProvider voiceClient={voiceClientRef.current}>
-      <VoiceClientAudio />
-      <TooltipProvider>
+  return ( 
+    <RTVIClientProvider client={voiceClientRef.current}> 
+      <RTVIClientAudio /> 
+      <TooltipProvider> 
         <SymptomsProvider>
           <BookingProvider>
-            <div className="flex flex-col min-h-svh">
-              {/* <Header /> */}
-              <main className="flex flex-1 flex-col items-center justify-center p-4 sm:px-6 md:px-8">
-                <AppProvider>
-                  <App processingFunction={processingFunction} />
-                </AppProvider>
-              </main>
-            </div>
+            <div className="flex flex-col min-h-svh"> 
+              {/* <Header />  */}
+              <main className="flex flex-1 flex-col items-center justify-center p-4 sm:px-6 md:px-8"> 
+                <AppProvider> 
+                  <App /> 
+                </AppProvider> 
+              </main> 
+            </div> 
           </BookingProvider>
         </SymptomsProvider>
-      </TooltipProvider>
-    </VoiceClientProvider>
-  );
+      </TooltipProvider> 
+    </RTVIClientProvider> 
+  ); 
 }
