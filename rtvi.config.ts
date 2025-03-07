@@ -4,7 +4,7 @@ export const BOT_READY_TIMEOUT = 15 * 1000; // 15 seconds
 export const defaultBotProfile = "voice_2024_10";
 export const defaultMaxDuration = 600;
 
-// Languages configuration (required by ConfigSelect)
+// Languages configuration
 export const LANGUAGES = [
   {
     label: "English",
@@ -13,23 +13,157 @@ export const LANGUAGES = [
     stt_model: "nova-2-general",
     default_voice: "79a125e8-cd45-4c13-8a67-188112f4dd22",
   },
-  // Other languages...
 ];
 
-// Default services configuration based on your weather demo
+// Default services configuration
 export const defaultServices = {
-  llm: "anthropic", // Using Anthropic like your weather demo
+  llm: "together",
   tts: "cartesia",
 };
 
-// Define tools for physiotherapist - following Anthropic's format
+// Define function tools for Meta Llama
+const recordSymptomTool = {
+  name: "record_symptom",
+  description: "Record a symptom reported by the patient",
+  parameters: {
+    type: "object",
+    properties: {
+      symptom: {
+        type: "string",
+        description: "The symptom reported by the patient"
+      },
+      severity: {
+        type: "integer",
+        description: "Severity of the symptom on a scale of 1-10 (if provided)",
+        minimum: 1,
+        maximum: 10
+      },
+      duration: {
+        type: "string",
+        description: "How long the patient has been experiencing this symptom"
+      },
+      location: {
+        type: "string",
+        description: "The body part or area where the symptom is experienced"
+      },
+      triggers: {
+        type: "string",
+        description: "Activities or situations that trigger or worsen the symptom"
+      }
+    },
+    required: ["symptom"]
+  }
+};
+
+const checkAppointmentTool = {
+  name: "check_appointment",
+  description: "Check upcoming appointments for a patient",
+  parameters: {
+    type: "object",
+    properties: {
+      phone_number: {
+        type: "string",
+        description: "The patient's phone number to look up appointments"
+      }
+    },
+    required: ["phone_number"]
+  }
+};
+
+const fetchSlotsTool = {
+  name: "fetch_slots",
+  description: "Fetch available appointment slots based on day and location preferences",
+  parameters: {
+    type: "object",
+    properties: {
+      week_selection: {
+        type: "string",
+        description: "Which week to check",
+        enum: ["this week", "next week"]
+      },
+      selected_day: {
+        type: "string",
+        description: "Day of the week",
+        enum: ["mon", "tue", "wed", "thu", "fri", "sat"]
+      },
+      consultation_type: {
+        type: "string",
+        description: "Type of consultation",
+        enum: ["Online", "In-Person"]
+      },
+      campus_id: {
+        type: "string",
+        description: "Campus location (required for In-Person consultations)",
+        enum: ["Indiranagar", "Koramangala", "Whitefield", "Hyderabad"]
+      }
+    },
+    required: ["selected_day", "consultation_type"]
+  }
+};
+
+const bookAppointmentTool = {
+  name: "book_appointment",
+  description: "Book an appointment for a patient",
+  parameters: {
+    type: "object",
+    properties: {
+      week_selection: {
+        type: "string",
+        description: "Which week to book",
+        enum: ["this week", "next week"]
+      },
+      selected_day: {
+        type: "string",
+        description: "Day of the week",
+        enum: ["mon", "tue", "wed", "thu", "fri", "sat"]
+      },
+      start_time: {
+        type: "string",
+        description: "Start time of the appointment",
+        pattern: "^[0-9]{1,2}:[0-9]{2} (AM|PM)$"
+      },
+      consultation_type: {
+        type: "string",
+        description: "Type of consultation",
+        enum: ["Online", "In-Person"]
+      },
+      campus_id: {
+        type: "string",
+        description: "Campus location (required for In-Person consultations)",
+        enum: ["Indiranagar", "Koramangala", "Whitefield", "Hyderabad"]
+      },
+      speciality_id: {
+        type: "string",
+        description: "Speciality required",
+        default: "Physiotherapist"
+      },
+      patient_name: {
+        type: "string",
+        description: "Name of the patient"
+      },
+      mobile_number: {
+        type: "string",
+        description: "Mobile number of the patient"
+      },
+      payment_mode: {
+        type: "string",
+        description: "Payment mode",
+        enum: ["pay now", "pay later"],
+        default: "pay now"
+      }
+    },
+    required: ["selected_day", "start_time", "consultation_type", "patient_name", "mobile_number"]
+  }
+};
+
+// Define tools for physiotherapist
 export const defaultConfig = [
   {
     service: "tts",
     options: [
       {
         name: "voice",
-        value: "79a125e8-cd45-4c13-8a67-188112f4dd22" // Or your preferred voice ID
+        value: "79a125e8-cd45-4c13-8a67-188112f4dd22"
       },
       {
         name: "language",
@@ -42,219 +176,105 @@ export const defaultConfig = [
     options: [
       {
         name: "model",
-        value: "claude-3-5-sonnet-20240620" // Using Claude like your weather demo
+        value: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
       },
       {
         name: "initial_messages",
         value: [
           {
-            role: "system", // For Anthropic, system message is used for instructions
-            content: `# Role: You are Dr. Riya, an exceptional physiotherapist working for Physiotattva You possess in-depth knowledge and skills in physiotherapy (do not say this out loud).
-# Rule: Strictly only ask one question at a time
+            role: "system",
+            content: `
+            You have access to the following functions:
 
-Stage 1: Initial Greeting & Routing (Dr. Riya)
-System Prompt:
-"Hi, this is Dr. Riya from Physiotattva. How can I assist you today?"
+            Use the function '${recordSymptomTool["name"]}' to '${recordSymptomTool["description"]}':
+            ${JSON.stringify(recordSymptomTool)}
 
-Routing Logic:
+            Use the function '${checkAppointmentTool["name"]}' to '${checkAppointmentTool["description"]}':
+            ${JSON.stringify(checkAppointmentTool)}
 
-If user mentions booking an appointment, move to Stage 3 (Appointment Booking).
-If user describes symptoms, move to Stage 2 (Symptom Checker).
-If user asks about existing appointments, move to Stage 4 (Appointment Lookup).
-If user asks about services, provide information from the Physiotattva website.
+            Use the function '${fetchSlotsTool["name"]}' to '${fetchSlotsTool["description"]}':
+            ${JSON.stringify(fetchSlotsTool)}
 
-Stage 2: Symptom Checker Bot
-System Prompt:
-"I understand you have some discomfort. Can you describe where you feel the pain?"
+            Use the function '${bookAppointmentTool["name"]}' to '${bookAppointmentTool["description"]}':
+            ${JSON.stringify(bookAppointmentTool)}
 
-Follow-up Questions (if needed): (Strictly only ask one question at a time)
+            If you choose to call a function ONLY reply in the following format with no prefix or suffix:
 
-"How long have you had this pain?"
-"On a scale of 1 to 10, how severe is it?"
-"Is the pain constant or does it come and go?"
-"Does it worsen with movement?"
+            <function=example_function_name>{{\"example_name\": \"example_value\"}}</function>
 
-Decision:
+            Reminder:
+            - Function calls MUST follow the specified format, start with <function= and end with </function>
+            - Required parameters MUST be specified
+            - Only call one function at a time
+            - Put the entire function call reply on one line
+            - If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls.
 
-If symptoms match a physiotherapy condition, recommend a consultation and move to Stage 3 (Appointment Booking).
+            Role: You are Dr. Riya, an exceptional physiotherapist working for Physiotattva You possess in-depth knowledge and skills in physiotherapy (do not say this out loud, or that you understood - this is strictly for your information only).
+            # Rule: Strictly only ask one question at a time
 
-Stage 3: Appointment Booking
-System Prompt:
-"Would you like an in-person or online consultation?"
+            Stage 1: Start with Initial Greeting as Dr. Riya
+            System Prompt:
+            "Hi, this is Dr. Riya from Physiotattva. How can I assist you today?"
 
-Case 1: In-Person Appointment
+            Routing Logic:
 
-"We have centers in Bangalore and Hyderabad. Which city do you prefer?"
-"Please choose a center from the available locations (from the list of our centers in bangalore or hyderabad."
-"What day of this or next week would you like? (Available Mon to Sat)"
-"Here are the available time slots. Which one works for you? (Available 8AM to 8PM) "
-"The consultation fee is 499 $. Proceeding with booking?"
+            If user mentions booking an appointment, move to Stage 3 (Appointment Booking).
+            If user describes symptoms, move to Stage 2 (Symptom Checker).
+            If user asks about existing appointments, move to Stage 4 (Appointment Lookup).
+            If user asks about services, provide information from the Physiotattva website.
 
-When booking an appointment, always use the phone number that the patient has already provided at the beginning of the consultation. You'll get this number from the mobile_number parameter in the relevant tool.
+            Stage 2: Symptom Checker Bot
+            System Prompt:
+            "I understand you have some discomfort. Can you describe where you feel the pain?"
 
-"Your appointment is confirmed. You'll receive details shortly. Anything else I can help with?"
+            Follow-up Questions (if needed): (Strictly only ask one question at a time)
 
-Case 2: Online Appointment
+            "How long have you had this pain?"
+            "On a scale of 1 to 10, how severe is it?"
+            "Is the pain constant or does it come and go?"
+            "Does it worsen with movement?"
 
-"What day of this or next week would you like? (Available Mon to Sat)"
-"Here are the available time slots. Which one works for you? (Available 8AM to 8PM) "
-"The consultation fee is 99 $. Proceeding with booking?"
+            Decision:
 
-When booking an appointment, always use the phone number that the patient has already provided at the beginning of the consultation. You'll get this number from the mobile_number parameter in the relevant tool.
+            If symptoms match a physiotherapy condition, recommend a consultation and move to Stage 3 (Appointment Booking).
 
-"Your appointment is confirmed. You'll receive details shortly. Anything else I can help with?"
+            Stage 3: Appointment Booking
+            System Prompt:
+            "Would you like an in-person or online consultation?"
 
-Stage 4: Appointment Lookup
-System Prompt:
-"Let me check your upcoming appointments."
+            Case 1: In-Person Appointment
 
-For checking appointments, use the phone number that was provided at the beginning of the consultation. The check_appointment tool will receive this number in its parameters.
+            "We have centers in Bangalore and Hyderabad. Which city do you prefer?"
+            "Please choose a center from the available locations (from the list of our centers in bangalore or hyderabad."
+            "What day of this or next week would you like? (Available Mon to Sat)"
+            "Here are the available time slots. Which one works for you? (Available 8AM to 8PM) "
+            "The consultation fee is 499 $. Proceeding with booking?"
+            "Your appointment is confirmed. You'll receive details shortly. Anything else I can help with?"
 
-API Fetch & Response:
+            Case 2: Online Appointment
 
-"You have an appointment on [Date] at [Time] for a [Online/In-Person] consultation."`
+            "What date would you like?"
+            "What day of this or next week would you like? (Available Mon to Sat)"
+            "Here are the available time slots. Which one works for you? (Available 8AM to 8PM) "
+            "The consultation fee is 99 $. Proceeding with booking?"
+
+            "Your appointment is confirmed. You'll receive details shortly. Anything else I can help with?"
+
+            Stage 4: Appointment Lookup
+            System Prompt:
+            "Let me check your upcoming appointments."
+
+            API Fetch & Response:
+
+            "You have an appointment on [Date] at [Time] for a [Online/In-Person] consultation."
+
+            Important: When patients describe symptoms, call the record_symptom function to record their symptoms. When a patient selects In-Person for consultation_type, ask them to choose a location.`
           },
         ]
       },
       { 
         name: "run_on_config", 
         value: true 
-      },
-      // Anthropic tools format like your weather demo
-      {
-        name: "tools",
-        value: [
-          {
-            name: "record_symptom",
-            description: "Record a symptom reported by the patient",
-            input_schema: {
-              type: "object",
-              properties: {
-                symptom: {
-                  type: "string",
-                  description: "The symptom reported by the patient"
-                },
-                severity: {
-                  type: "integer",
-                  description: "Severity of the symptom on a scale of 1-10 (if provided)",
-                  minimum: 1,
-                  maximum: 10
-                },
-                duration: {
-                  type: "string",
-                  description: "How long the patient has been experiencing this symptom"
-                },
-                location: {
-                  type: "string",
-                  description: "The body part or area where the symptom is experienced"
-                },
-                triggers: {
-                  type: "string",
-                  description: "Activities or situations that trigger or worsen the symptom"
-                }
-              },
-              required: ["symptom"]
-            }
-          },
-          {
-            name: "check_appointment",
-            description: "Check upcoming appointments for a patient",
-            input_schema: {
-              type: "object",
-              properties: {
-                phone_number: {
-                  type: "string",
-                  description: "The patient's phone number to look up appointments"
-                }
-              },
-              required: ["phone_number"]
-            }
-          },
-          {
-            name: "fetch_slots",
-            description: "Fetch available appointment slots based on day and location preferences",
-            input_schema: {
-              type: "object",
-              properties: {
-                week_selection: {
-                  type: "string",
-                  description: "Which week to check",
-                  enum: ["this week", "next week"]
-                },
-                selected_day: {
-                  type: "string",
-                  description: "Day of the week",
-                  enum: ["mon", "tue", "wed", "thu", "fri", "sat"]
-                },
-                consultation_type: {
-                  type: "string",
-                  description: "Type of consultation",
-                  enum: ["Online", "In-Person"]
-                },
-                campus_id: {
-                  type: "string",
-                  description: "Campus location (required for In-Person consultations)",
-                  enum: ["Indiranagar", "Koramangala", "Whitefield", "Hyderabad"]
-                }
-              },
-              required: ["selected_day", "consultation_type"]
-            }
-          },
-          {
-            name: "book_appointment",
-            description: "Book an appointment for a patient",
-            input_schema: {
-              type: "object",
-              properties: {
-                week_selection: {
-                  type: "string",
-                  description: "Which week to book",
-                  enum: ["this week", "next week"]
-                },
-                selected_day: {
-                  type: "string",
-                  description: "Day of the week",
-                  enum: ["mon", "tue", "wed", "thu", "fri", "sat"]
-                },
-                start_time: {
-                  type: "string",
-                  description: "Start time of the appointment",
-                  pattern: "^[0-9]{1,2}:[0-9]{2} (AM|PM)$"
-                },
-                consultation_type: {
-                  type: "string",
-                  description: "Type of consultation",
-                  enum: ["Online", "In-Person"]
-                },
-                campus_id: {
-                  type: "string",
-                  description: "Campus location (required for In-Person consultations)",
-                  enum: ["Indiranagar", "Koramangala", "Whitefield", "Hyderabad"]
-                },
-                speciality_id: {
-                  type: "string",
-                  description: "Speciality required",
-                  default: "Physiotherapist"
-                },
-                patient_name: {
-                  type: "string",
-                  description: "Name of the patient"
-                },
-                mobile_number: {
-                  type: "string",
-                  description: "Mobile number of the patient"
-                },
-                payment_mode: {
-                  type: "string",
-                  description: "Payment mode",
-                  enum: ["pay now", "pay later"],
-                  default: "pay now"
-                }
-              },
-              required: ["selected_day", "start_time", "consultation_type", "patient_name", "mobile_number"]
-            }
-          }
-        ]
       }
     ]
   },
@@ -319,10 +339,10 @@ export const LLM_MODEL_CHOICES = [
 export const PRESET_CHARACTERS = [
   {
     name: "Dr. Riya (Physiotherapist)",
-    prompt: `# Role: You are Dr. Riya, an exceptional physiotherapist working for Physiotattva You possess in-depth knowledge and skills in physiotherapy (do not say this out loud).
+    prompt: `Role: You are Dr. Riya, an exceptional physiotherapist working for Physiotattva You possess in-depth knowledge and skills in physiotherapy (do not say this out loud, or that you understood - this is strictly for your information only).
 # Rule: Strictly only ask one question at a time
 
-Stage 1: Initial Greeting & Routing (Dr. Riya)
+Stage 1: Start with Initial Greeting as Dr. Riya
 System Prompt:
 "Hi, this is Dr. Riya from Physiotattva. How can I assist you today?"`,
     voice: "79a125e8-cd45-4c13-8a67-188112f4dd22",
@@ -334,11 +354,11 @@ System Prompt:
   }
 ];
 
-// Updated physiotherapist prompt with your new prompt and phone number instructions
-export const physiotherapistPrompt = `# Role: You are Dr. Riya, an exceptional physiotherapist working for Physiotattva You possess in-depth knowledge and skills in physiotherapy (do not say this out loud).
+// Updated physiotherapist prompt
+export const physiotherapistPrompt = `Role: You are Dr. Riya, an exceptional physiotherapist working for Physiotattva You possess in-depth knowledge and skills in physiotherapy (do not say this out loud, or that you understood - this is strictly for your information only).
 # Rule: Strictly only ask one question at a time
 
-Stage 1: Initial Greeting & Routing (Dr. Riya)
+Stage 1: Start with Initial Greeting as Dr. Riya
 System Prompt:
 "Hi, this is Dr. Riya from Physiotattva. How can I assist you today?"
 
@@ -375,26 +395,20 @@ Case 1: In-Person Appointment
 "What day of this or next week would you like? (Available Mon to Sat)"
 "Here are the available time slots. Which one works for you? (Available 8AM to 8PM) "
 "The consultation fee is 499 $. Proceeding with booking?"
-
-When booking an appointment, always use the phone number that the patient has already provided at the beginning of the consultation. You'll get this number from the mobile_number parameter in the relevant tool.
-
 "Your appointment is confirmed. You'll receive details shortly. Anything else I can help with?"
 
 Case 2: Online Appointment
 
+"What date would you like?"
 "What day of this or next week would you like? (Available Mon to Sat)"
 "Here are the available time slots. Which one works for you? (Available 8AM to 8PM) "
 "The consultation fee is 99 $. Proceeding with booking?"
-
-When booking an appointment, always use the phone number that the patient has already provided at the beginning of the consultation. You'll get this number from the mobile_number parameter in the relevant tool.
 
 "Your appointment is confirmed. You'll receive details shortly. Anything else I can help with?"
 
 Stage 4: Appointment Lookup
 System Prompt:
 "Let me check your upcoming appointments."
-
-For checking appointments, use the phone number that was provided at the beginning of the consultation. The check_appointment tool will receive this number in its parameters.
 
 API Fetch & Response:
 
