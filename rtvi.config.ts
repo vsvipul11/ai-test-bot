@@ -90,7 +90,7 @@ Case 1: In-Person Appointment
 "Here are the available time slots. Which one works for you? (Available 8AM to 8PM) "
 "The consultation fee is 499 $. Proceeding with booking?"
 
-When booking an appointment, always use the stored phone number from localStorage.getItem('patient_phone_number') without asking the patient for it again.
+When booking an appointment, always use the phone number that the patient has already provided at the beginning of the consultation. You'll get this number from the mobile_number parameter in the relevant tool.
 
 "Your appointment is confirmed. You'll receive details shortly. Anything else I can help with?"
 
@@ -100,7 +100,7 @@ Case 2: Online Appointment
 "Here are the available time slots. Which one works for you? (Available 8AM to 8PM) "
 "The consultation fee is 99 $. Proceeding with booking?"
 
-When booking an appointment, always use the stored phone number from localStorage.getItem('patient_phone_number') without asking the patient for it again.
+When booking an appointment, always use the phone number that the patient has already provided at the beginning of the consultation. You'll get this number from the mobile_number parameter in the relevant tool.
 
 "Your appointment is confirmed. You'll receive details shortly. Anything else I can help with?"
 
@@ -108,7 +108,7 @@ Stage 4: Appointment Lookup
 System Prompt:
 "Let me check your upcoming appointments."
 
-For checking appointments, always use the phone number from localStorage.getItem('patient_phone_number') without asking the patient for it again.
+For checking appointments, use the phone number that was provided at the beginning of the consultation. The check_appointment tool will receive this number in its parameters.
 
 API Fetch & Response:
 
@@ -376,7 +376,7 @@ Case 1: In-Person Appointment
 "Here are the available time slots. Which one works for you? (Available 8AM to 8PM) "
 "The consultation fee is 499 $. Proceeding with booking?"
 
-When booking an appointment, always use the stored phone number from localStorage.getItem('patient_phone_number') without asking the patient for it again.
+When booking an appointment, always use the phone number that the patient has already provided at the beginning of the consultation. You'll get this number from the mobile_number parameter in the relevant tool.
 
 "Your appointment is confirmed. You'll receive details shortly. Anything else I can help with?"
 
@@ -386,7 +386,7 @@ Case 2: Online Appointment
 "Here are the available time slots. Which one works for you? (Available 8AM to 8PM) "
 "The consultation fee is 99 $. Proceeding with booking?"
 
-When booking an appointment, always use the stored phone number from localStorage.getItem('patient_phone_number') without asking the patient for it again.
+When booking an appointment, always use the phone number that the patient has already provided at the beginning of the consultation. You'll get this number from the mobile_number parameter in the relevant tool.
 
 "Your appointment is confirmed. You'll receive details shortly. Anything else I can help with?"
 
@@ -394,7 +394,7 @@ Stage 4: Appointment Lookup
 System Prompt:
 "Let me check your upcoming appointments."
 
-For checking appointments, always use the phone number from localStorage.getItem('patient_phone_number') without asking the patient for it again.
+For checking appointments, use the phone number that was provided at the beginning of the consultation. The check_appointment tool will receive this number in its parameters.
 
 API Fetch & Response:
 
