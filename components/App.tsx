@@ -15,6 +15,9 @@ import { Configure } from "./Setup";
 import { Alert } from "./ui/alert";
 import { Button } from "./ui/button";
 import * as Card from "./ui/card";
+import * as Dialog from "./ui/dialog";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 
 const status_text = {
   idle: "Initializing...",
@@ -35,6 +38,11 @@ export default function App() {
   const [startAudioOff, setStartAudioOff] = useState<boolean>(false);
   const mountedRef = useRef<boolean>(false);
   const { clientParams } = useContext(AppContext);
+  
+  // Phone number collection states
+  const [phoneNumber, setPhoneNumber] = useState<string>("9873219957");
+  const [phoneInputVisible, setPhoneInputVisible] = useState<boolean>(false);
+  const [phoneNumberReady, setPhoneNumberReady] = useState<boolean>(false);
 
   useRTVIClientEvent(
     RTVIEvent.Error,
@@ -45,15 +53,27 @@ export default function App() {
     }, [])
   );
 
+  // Check if phone number exists on component mount
   useEffect(() => {
-    // Initialize local audio devices
-    if (!voiceClient || mountedRef.current) return;
-    mountedRef.current = true;
-    voiceClient.initDevices();
-  }, [appState, voiceClient]);
+    const storedPhoneNumber = localStorage.getItem('patient_phone_number');
+    if (storedPhoneNumber) {
+      setPhoneNumber(storedPhoneNumber);
+      setPhoneNumberReady(true);
+    } else {
+      setPhoneInputVisible(true);
+      setPhoneNumberReady(false);
+    }
+  }, []);
 
   useEffect(() => {
-    if (!voiceClient || !voiceClient.params) {
+    // Initialize local audio devices only if phone number is ready
+    if (!voiceClient || mountedRef.current || !phoneNumberReady) return;
+    mountedRef.current = true;
+    voiceClient.initDevices();
+  }, [appState, voiceClient, phoneNumberReady]);
+
+  useEffect(() => {
+    if (!voiceClient || !voiceClient.params || !phoneNumberReady) {
       return;
     }
     
@@ -64,7 +84,7 @@ export default function App() {
         ...clientParams,
       },
     };
-  }, [voiceClient, appState, clientParams]);
+  }, [voiceClient, appState, clientParams, phoneNumberReady]);
 
   useEffect(() => {
     // Update app state based on voice client transport state.
@@ -89,8 +109,24 @@ export default function App() {
     }
   }, [transportState]);
 
+  // Handle phone number submission
+  const handlePhoneSubmit = (e) => {
+    e.preventDefault();
+    if (phoneNumber && phoneNumber.length >= 10) {
+      setPhoneInputVisible(false);
+      localStorage.setItem('patient_phone_number', phoneNumber);
+      
+      window.dispatchEvent(new CustomEvent('phone_number_updated', { 
+        detail: phoneNumber 
+      }));
+      
+      // Set the phone number as ready, which will trigger initialization
+      setPhoneNumberReady(true);
+    }
+  };
+
   async function start() {
-    if (!voiceClient) return;
+    if (!voiceClient || !phoneNumberReady) return;
 
     // Join the session
     try {
@@ -111,6 +147,45 @@ export default function App() {
   /**
    * UI States
    */
+
+  // Show phone number input dialog if needed
+  if (phoneInputVisible) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+        <Dialog.Dialog open={phoneInputVisible} onOpenChange={setPhoneInputVisible}>
+          <Dialog.DialogContent className="sm:max-w-md">
+            <Dialog.DialogHeader>
+              <Dialog.DialogTitle>Enter Your Mobile Number</Dialog.DialogTitle>
+              <Dialog.DialogDescription>
+                Please enter your mobile number to proceed with the consultation and view your appointments.
+              </Dialog.DialogDescription>
+            </Dialog.DialogHeader>
+            <form onSubmit={handlePhoneSubmit}>
+              <div className="grid gap-4 py-4">
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="phoneNumber" className="text-right">
+                    Mobile Number
+                  </Label>
+                  <Input
+                    id="phoneNumber"
+                    value={phoneNumber}
+                    onChange={(e) => setPhoneNumber(e.target.value)}
+                    placeholder="Enter 10 digit number"
+                    className="col-span-3"
+                  />
+                </div>
+              </div>
+              <Dialog.DialogFooter>
+                <Button type="submit" disabled={!phoneNumber || phoneNumber.length < 10}>
+                  Continue
+                </Button>
+              </Dialog.DialogFooter>
+            </form>
+          </Dialog.DialogContent>
+        </Dialog.Dialog>
+      </div>
+    );
+  }
 
   // Error: show full screen message
   if (error) {
@@ -133,7 +208,7 @@ export default function App() {
   }
 
   // Default: show setup view
-  const isReady = appState === "ready";
+  const isReady = appState === "ready" && phoneNumberReady;
 
   return (
     <div className="w-full max-w-4xl mx-auto p-4">

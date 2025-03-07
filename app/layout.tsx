@@ -17,9 +17,9 @@ const fontMono = Space_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Daily Bots Demo",
-  description: "Daily Bots voice-to-voice example app",
-  metadataBase: new URL("https://demo.dailybots.ai"),
+  title: "Physiotattva Demo",
+  description: "Physiotattva",
+  metadataBase: new URL("https://www.app.physiotattva247.com/"),
 };
 
 export default function RootLayout({

@@ -48,6 +48,7 @@ export const Session = React.memo(
     const [muted, setMuted] = useState(startAudioOff);
     const [phoneNumber, setPhoneNumber] = useState<string>("9873219957");
     const [phoneInputVisible, setPhoneInputVisible] = useState<boolean>(true);
+    const [consultationReady, setConsultationReady] = useState<boolean>(false);
     const { refreshSymptoms } = useSymptoms();
     const [showSlotSelection, setShowSlotSelection] = useState<boolean>(false);
     const [showLocationSelection, setShowLocationSelection] = useState<boolean>(false);
@@ -85,41 +86,62 @@ export const Session = React.memo(
       };
     }, []);
 
-    // ---- Voice Client Events
+    // Check if phone number exists on load
+    useEffect(() => {
+      const storedPhoneNumber = localStorage.getItem('patient_phone_number');
+      if (storedPhoneNumber) {
+        setPhoneNumber(storedPhoneNumber);
+        setPhoneInputVisible(false);
+        setConsultationReady(true);
+      } else {
+        setPhoneInputVisible(true);
+        setConsultationReady(false);
+      }
+    }, []);
 
-    useRTVIClientEvent(
-      RTVIEvent.Metrics,
-      useCallback((metrics: PipecatMetricsData) => {
+    // ---- Voice Client Events - only register these once consultation is ready
+    useEffect(() => {
+      if (!consultationReady) return;
+
+      const metricsHandler = (metrics: PipecatMetricsData) => {
         metrics?.ttfb?.map((m: { processor: string; value: number }) => {
           stats_aggregator.addStat([m.processor, "ttfb", m.value, Date.now()]);
         });
-      }, [])
-    );
+      };
 
-    useRTVIClientEvent(
-      RTVIEvent.BotStoppedSpeaking,
-      useCallback(() => {
+      const botStoppedHandler = () => {
         if (hasStarted) return;
         setHasStarted(true);
-      }, [hasStarted])
-    );
+      };
 
-    useRTVIClientEvent(
-      RTVIEvent.UserStoppedSpeaking,
-      useCallback(() => {
+      const userStoppedHandler = () => {
         if (hasStarted) return;
         setHasStarted(true);
-      }, [hasStarted])
-    );
+      };
+
+      // Register event handlers
+      voiceClient.on(RTVIEvent.Metrics, metricsHandler);
+      voiceClient.on(RTVIEvent.BotStoppedSpeaking, botStoppedHandler);
+      voiceClient.on(RTVIEvent.UserStoppedSpeaking, userStoppedHandler);
+
+      // Cleanup
+      return () => {
+        voiceClient.off(RTVIEvent.Metrics, metricsHandler);
+        voiceClient.off(RTVIEvent.BotStoppedSpeaking, botStoppedHandler);
+        voiceClient.off(RTVIEvent.UserStoppedSpeaking, userStoppedHandler);
+      };
+    }, [consultationReady, hasStarted, voiceClient]);
 
     // Poll for symptoms periodically
     useEffect(() => {
+      if (!consultationReady) return;
+      
       const intervalId = setInterval(() => {
         refreshSymptoms();
       }, 5000);
       
       return () => clearInterval(intervalId);
-    }, [refreshSymptoms]);
+    }, [refreshSymptoms, consultationReady]);
 
     // ---- Effects
 
@@ -129,18 +151,20 @@ export const Session = React.memo(
     }, []);
 
     useEffect(() => {
-      // If we joined unmuted, enable the mic once in ready state
-      if (!hasStarted || startAudioOff) return;
+      // If we joined unmuted and consultation is ready, enable the mic
+      if (!hasStarted || startAudioOff || !consultationReady) return;
       voiceClient.enableMic(true);
-    }, [voiceClient, startAudioOff, hasStarted]);
+    }, [voiceClient, startAudioOff, hasStarted, consultationReady]);
 
     useEffect(() => {
       // Create new stats aggregator on mount (removes stats from previous session)
       stats_aggregator = new StatsAggregator();
       
       // Refresh symptoms when session starts
-      refreshSymptoms();
-    }, [refreshSymptoms]);
+      if (consultationReady) {
+        refreshSymptoms();
+      }
+    }, [refreshSymptoms, consultationReady]);
 
     useEffect(() => {
       // Leave the meeting if there is an error
@@ -176,9 +200,50 @@ export const Session = React.memo(
         window.dispatchEvent(new CustomEvent('phone_number_updated', { 
           detail: phoneNumber 
         }));
+        
+        // Set consultation as ready to proceed
+        setConsultationReady(true);
       }
     };
 
+    // If phone input is needed, show only that without starting consultation
+    if (phoneInputVisible) {
+      return (
+        <Dialog.Dialog open={phoneInputVisible} onOpenChange={setPhoneInputVisible}>
+          <Dialog.DialogContent className="sm:max-w-md">
+            <Dialog.DialogHeader>
+              <Dialog.DialogTitle>Enter Your Mobile Number</Dialog.DialogTitle>
+              <Dialog.DialogDescription>
+                Please enter your mobile number to proceed with the consultation and view your appointments.
+              </Dialog.DialogDescription>
+            </Dialog.DialogHeader>
+            <form onSubmit={handlePhoneSubmit}>
+              <div className="grid gap-4 py-4">
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="phoneNumber" className="text-right">
+                    Mobile Number
+                  </Label>
+                  <Input
+                    id="phoneNumber"
+                    value={phoneNumber}
+                    onChange={(e) => setPhoneNumber(e.target.value)}
+                    placeholder="Enter 10 digit number"
+                    className="col-span-3"
+                  />
+                </div>
+              </div>
+              <Dialog.DialogFooter>
+                <Button type="submit" disabled={!phoneNumber || phoneNumber.length < 10}>
+                  Start Consultation
+                </Button>
+              </Dialog.DialogFooter>
+            </form>
+          </Dialog.DialogContent>
+        </Dialog.Dialog>
+      );
+    }
+
+    // Main consultation UI - only shown after phone number is collected
     return (
       <>
         {/* Configuration Modal */}
@@ -212,41 +277,6 @@ export const Session = React.memo(
             </Card.CardFooter>
           </Card.Card>
         </dialog>
-
-        {/* Phone Number Input Dialog */}
-        {phoneInputVisible && (
-          <Dialog.Dialog open={phoneInputVisible} onOpenChange={setPhoneInputVisible}>
-            <Dialog.DialogContent className="sm:max-w-md">
-              <Dialog.DialogHeader>
-                <Dialog.DialogTitle>Enter Your Mobile Number</Dialog.DialogTitle>
-                <Dialog.DialogDescription>
-                  Please enter your mobile number to proceed with the consultation and view your appointments.
-                </Dialog.DialogDescription>
-              </Dialog.DialogHeader>
-              <form onSubmit={handlePhoneSubmit}>
-                <div className="grid gap-4 py-4">
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="phoneNumber" className="text-right">
-                      Mobile Number
-                    </Label>
-                    <Input
-                      id="phoneNumber"
-                      value={phoneNumber}
-                      onChange={(e) => setPhoneNumber(e.target.value)}
-                      placeholder="Enter 10 digit number"
-                      className="col-span-3"
-                    />
-                  </div>
-                </div>
-                <Dialog.DialogFooter>
-                  <Button type="submit" disabled={!phoneNumber || phoneNumber.length < 10}>
-                    Proceed
-                  </Button>
-                </Dialog.DialogFooter>
-              </form>
-            </Dialog.DialogContent>
-          </Dialog.Dialog>
-        )}
 
         {showStats &&
           createPortal(
